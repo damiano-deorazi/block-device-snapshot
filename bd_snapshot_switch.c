@@ -1,10 +1,15 @@
 #include <linux/version.h>
 #include <linux/syscalls.h>
 #include <linux/slab.h> 
+#include <openssl/sha.h>
+
 #include "bd_snapshot.h"
 
 device_t *dev_list_head = NULL;
-char *ss_password = NULL; //password per l'attivazione/disattivazione degli snapshot 
+unsigned char ss_hpasswd[32] = NULL; //password per l'attivazione/disattivazione degli snapshot 
+unsigned char salt[32] = NULL; //sale per l'hashing della password
+int iter = -1; //numero di iterazioni per l'algoritmo di hashing
+
 
 int push(device_t **head, char *device_name, char *mount_point, bool ss_is_active) {
     device_t * new_device;
@@ -61,10 +66,47 @@ int remove_by_index(device_t **head, int n) {
 
     temp_node = current->next;
     current->next = temp_node->next;
-    free(temp_node);
+    kfree(temp_node);
 
     return 1;
 
+}
+
+int generate_hash(char *password) {
+    /*int salt_ok = RAND_bytes(salt, sizeof(salt));
+                                                        -------> decidere se generare un sale random ad ogni avvio del modulo o utilizzare un sale fisso
+    if (!salt_ok) {
+        printk("Error generating salt\n");
+        return 0;
+    }*/
+
+    int hash_ok = PKCS5_PBKDF2_HMAC(password, -1,
+        salt, sizeof(salt),
+        iter, EVP_sha256(),
+        sizeof(ss_hpasswd), ss_hpasswd);
+    
+    if (!hash_ok) {
+        printk("Error generating hash\n");
+        return 0;
+    }
+    
+    return 1;
+}
+
+int check_password(char *password) {
+    unsigned char key[32] = {0};
+    
+    int hash_ok = generate_hash(password);
+
+    if (!hash_ok) {
+        return 0;
+    }
+
+    if (memcmp(key, ss_hpasswd, sizeof(ss_hpasswd)) == 0) {
+        return 1; //password corretta
+    } else {
+        return 0; //password errata
+    }
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
@@ -72,7 +114,14 @@ __SYSCALL_DEFINE2(activate_snapshot, char *, dev_name, char *, password){
 #else
 asmlinkage long sys_activate_snapshot(char *dev_name, char *password){
 #endif
+    int login_success = check_password(password);
+    if (!login_success) {
+        printk("Incorrect password\n");
+        return 0;
+    }
 
+    //TODO cercare il device nella lista e attivare lo snapshot
+    
 }
 
 

@@ -2,7 +2,8 @@
 #include <linux/module.h>
 #include <linux/kprobes.h>
 #include <linux/printk.h>
-#include <linux/ptrace.h>
+#include <linux/uaccess.h>
+#include <linux/string.h>
 #include <linux/version.h>
 
 MODULE_AUTHOR("Francesco Quaglia <francesco.quaglia@uniroma2.it>");
@@ -11,25 +12,49 @@ MODULE_DESCRIPTION("This module intecepts the return of the sys_read kernel func
 
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
-#define target_func "__x64_sys_fsopen"
+#define target_func "__x64_sys_move_mount"
 #else
-#define target_func "sys_mount"
+#define target_func "__x64_sys_fsmount"
 #endif 
 
 #define MOD_NAME "BD-SNAPSHOT-KPROBE"
 
 
 static int tail_hook(struct kprobe *ri, struct pt_regs *the_regs) {
-    struct pt_regs *regs;
-    
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
-	regs = (struct pt_regs*)the_regs->di;
-#else
-	regs = (struct pt_regs*)the_regs;
-#endif
+    struct pt_regs *regs = (struct pt_regs *)the_regs->di;
+	
+	const char __user *from_path, *to_path;
+	char fpathbuff[256], tpathbuff[256];
 
-	//printk("%s: Rilevata esecuzione di sys_mount: source %s - target %s\n", MOD_NAME, (char*)regs->di, (char*)regs->si);
-	printk("%s: Rilevata mount\n", MOD_NAME);
+	int from_fd = (int)regs->di;
+	from_path = (const char __user *)regs->si;
+	int to_df = (int)regs->dx;
+	to_path = (const char __user *)regs->r10;
+
+	if (from_path) {
+        if (strncpy_from_user(fpathbuff, from_path, sizeof(fpathbuff) - 1) < 0){
+			printk("%s: error reading from_pathname\n", MOD_NAME);
+			return 0;
+		}
+        fpathbuff[sizeof(fpathbuff) - 1] = '\0';
+    } else {
+        printk("%s: error reading from_path from register\n", MOD_NAME);
+		return 0;
+    }
+
+	if (to_path) {
+		if (strncpy_from_user(tpathbuff, to_path, sizeof(tpathbuff) - 1) < 0){
+			printk("%s: error reading to_pathname\n", MOD_NAME);
+			return 0;
+		}
+		tpathbuff[sizeof(tpathbuff) - 1] = '\0';
+	} else {
+		printk("%s: error reading to_path from register\n", MOD_NAME);
+		return 0;
+	}
+	
+	printk("%s: Rilevata esecuzione di move_mount: from_fd=%d from_pathname=%s to_df=%d to_pathname=%s\n", MOD_NAME, from_fd, fpathbuff, to_df, to_path);
+
 	return 0;
 }
 
