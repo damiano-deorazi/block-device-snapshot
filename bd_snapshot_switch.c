@@ -2,28 +2,52 @@
 #include <linux/syscalls.h>
 #include <linux/slab.h> 
 #include <openssl/sha.h>
+#include <linux/list.h>
+#include <linux/spinlock.h>
 
-#include "bd_snapshot.h"
+#include "bd_snapshot_list.h"
 
-device_t *dev_list_head = NULL;
 unsigned char ss_hpasswd[32] = NULL; //password per l'attivazione/disattivazione degli snapshot 
 unsigned char salt[32] = NULL; //sale per l'hashing della password
 int iter = -1; //numero di iterazioni per l'algoritmo di hashing
 
+DEFINE_SPINLOCK(lock);
+LIST_HEAD(dev_list_head);
 
-int push(device_t **head, char *device_name, char *mount_point, bool ss_is_active) {
-    device_t * new_device;
+device_t *search_device(char *device_name) {
+
+    device_t *pos = NULL; 
+
+    list_for_each_entry (pos, &dev_list_head, device_list) { 
+        
+        if (strcmp(pos->device_name, device_name) == 0) {
+            return pos;
+        }
+    
+    }
+
+    return NULL;
+}
+
+int push(struct list_head *head, char *device_name, char *mount_point, bool ss_is_active) {
+
+    device_t *new_device;
     //TODO decidere se utilizzare kmalloc (utile per allocazione < PAGSIZE, memoria fisica contigua) o vmalloc (utile per allocazione > PAGSIZE, memoria fisica non contigua)
     new_device = (device_t *) kmalloc(sizeof(device_t));
+
     if (new_device == NULL) {
+        
         printk("Memory allocation of a new device failed\n");
         return 0;
+    
     }
+    
     new_device->device_name = device_name;
     new_device->mount_point = mount_point;
     new_device->ss_is_active = ss_is_active;
-    new_device->next = *head;
-    *head = new_device;
+    
+    list_add(&new_device->device_list, head);
+
     return 1;
 }
 
@@ -115,13 +139,48 @@ __SYSCALL_DEFINE2(activate_snapshot, char *, dev_name, char *, password){
 asmlinkage long sys_activate_snapshot(char *dev_name, char *password){
 #endif
     int login_success = check_password(password);
+
     if (!login_success) {
+
         printk("Incorrect password\n");
         return 0;
+    
     }
 
-    //TODO cercare il device nella lista e attivare lo snapshot
-    
+    spin_lock(&lock);
+
+    device_t *device_registered = search_device(dev_name);
+
+    if (device_registered == NULL) {
+
+        if(!push(&dev_list_head, dev_name, NULL, 1)) {
+
+            spin_unlock(&lock);
+            printk("Error registering device\n");
+            return 0;
+        
+        }
+        
+        spin_unlock(&lock);
+        printk("Device %s registered\n", dev_name);
+        return 1;
+
+    } else {
+
+        if (device_registered->ss_is_active) {
+
+            spin_unlock(&lock);
+            printk("Snapshot already active for device %s\n", dev_name);
+            return 1;
+
+        } else {
+
+            device_registered->ss_is_active = 1;
+            spin_unlock(&lock);
+            printk("Snapshot activated for device %s\n", dev_name);
+            return 1;
+        }
+    }
 }
 
 
