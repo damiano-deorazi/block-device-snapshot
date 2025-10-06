@@ -17,4 +17,7 @@ int pop(device_t **head);
 
 int remove_by_index(device_t **head, int n);
 
+//bd_snapshot_list.c
+extern struct list_head dev_list_head;
+
 #endif
