@@ -30,6 +30,8 @@ static int tail_hook(struct kprobe *ri, struct pt_regs *the_regs) {
 	from_path = (const char __user *)regs->si;
 	int to_df = (int)regs->dx;
 	to_path = (const char __user *)regs->r10;
+	
+
 
 	if (from_path) {
         if (strncpy_from_user(fpathbuff, from_path, sizeof(fpathbuff) - 1) < 0){
@@ -54,7 +56,7 @@ static int tail_hook(struct kprobe *ri, struct pt_regs *the_regs) {
 	}
 	
 	printk("%s: Rilevata esecuzione di move_mount: from_fd=%d from_pathname=%s to_df=%d to_pathname=%s\n", MOD_NAME, from_fd, fpathbuff, to_df, to_path);
-
+	
 	return 0;
 }
 
