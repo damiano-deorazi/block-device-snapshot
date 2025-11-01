@@ -5,6 +5,8 @@
 #include "bd_snapshot_list.h"
 #include "bd_snapshot.h"
 
+DEFINE_SPINLOCK(lock);
+
 LIST_HEAD(dev_list_head);
 
 device_t *search_device(char *device_name) {

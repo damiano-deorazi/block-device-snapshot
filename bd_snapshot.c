@@ -7,9 +7,12 @@
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/cred.h>
+#include <linux/atomic.h>
 
 #include "bd_snapshot.h"
 #include "bd_snapshot_list.h"
+#include "bd_snapshot_kprobe.h"
+#include "syscall_table_mod.h"
 //TODO: includere header per la risoluzione di risorse (es. MOD_NAME)
 
 unsigned long the_syscall_table = 0x0;
@@ -24,9 +27,9 @@ unsigned char ss_hpasswd[32] = NULL; //password per l'attivazione/disattivazione
 unsigned char salt[32] = NULL; //sale per l'hashing della password
 int iter = -1; //numero di iterazioni per l'algoritmo di hashing
 
-//TODO: valutare l'introduzione di una variabile per attivare/diattivare il monitoraggio delle operazioni di mount (quando la lista è vuota non ha senso monitorare)
+atomic_t monitor_mount_is_active = ATOMIC_INIT(0);
+atomic_t monitor_umount_is_active = ATOMIC_INIT(0);
 
-DEFINE_SPINLOCK(lock);
 
 int generate_hash(char *password) {
     /*int salt_ok = RAND_bytes(salt, sizeof(salt));
@@ -72,7 +75,7 @@ asmlinkage long sys_activate_snapshot(char *dev_name, char *password){
 #endif
     int process_is_root = current_euid().val;
 
-    if (process_is_root != 0) {
+    if (!process_is_root) {
 
         printk("%s: Only root can activate/deactivate snapshots\n", MOD_NAME);
         return 0;
@@ -101,8 +104,10 @@ asmlinkage long sys_activate_snapshot(char *dev_name, char *password){
             return 0;
         
         }
-        
+
+        atomic_cmpxchg(&monitor_mount_is_active, 0, 1);
         spin_unlock(&lock);
+
         printk("%s: Device %s registered\n", MOD_NAME, dev_name);
         return 1;
 
@@ -117,7 +122,23 @@ asmlinkage long sys_activate_snapshot(char *dev_name, char *password){
         } else {
 
             device_registered->ss_is_active = 1;
+            atomic_cmpxchg(&monitor_mount_is_active, 0, 1);
+
+            device_t *device = NULL; 
+
+            list_for_each_entry (device, &dev_list_head, device_list) { 
+            
+                if (device->ss_is_active == 0) {
+                    break;
+                }
+            }
+
+            if (device->ss_is_active) {
+                atomic_cmpxchg(&monitor_umount_is_active, 1, 0); //TODO: controllare se device è NULL o punta all'ultimo elemento della lista dei dispositivi
+            }
+
             spin_unlock(&lock);
+
             printk("%s: Snapshot activated for device %s\n", MOD_NAME, dev_name);
             return 1;
         }
@@ -133,7 +154,7 @@ asmlinkage long sys_deactivate_snapshot(char *dev_name, char *password){
 
     int process_is_root = current_euid().val;
 
-    if (process_is_root != 0) {
+    if (!process_is_root) {
 
         printk("%s: Only root can activate/deactivate snapshots\n", MOD_NAME);
         return 0;
@@ -161,13 +182,67 @@ asmlinkage long sys_deactivate_snapshot(char *dev_name, char *password){
 
     } else {
 
-        device_registered->ss_is_active = 0;
-        spin_unlock(&lock);
-        printk("%s: Snapshot deactivated for device %s\n", MOD_NAME, dev_name);
-        return 1;
+        if (device_registered->ss_is_active == 0) {
+
+            spin_unlock(&lock);
+            printk("%s: Snapshot already deactive for device %s\n", MOD_NAME, dev_name);
+            return 1;
+
+        } else {
+
+            device_registered->ss_is_active = 0;
+            atomic_cmpxchg(&monitor_umount_is_active, 0, 1);
+
+            device_t *device = NULL; 
+
+            list_for_each_entry (device, &dev_list_head, device_list) { 
+            
+                if (device->ss_is_active == 1) {
+                    break;
+                }
+            }
+
+            if (device->ss_is_active == 0) {
+                atomic_cmpxchg(&monitor_mount_is_active, 1, 0); //TODO: controllare se device è NULL o punta all'ultimo elemento della lista dei dispositivi
+            }
+
+            spin_unlock(&lock);
+            
+            printk("%s: Snapshot deactivated for device %s\n", MOD_NAME, dev_name);
+            return 1;
     }
 }
 
+int hook_init(void) {
+
+	int ret;
+
+	ret = register_kprobe(&kp_mount);
+
+	if (ret < 0) {
+		pintk("%s: hook init failed, returned %d\n", MOD_NAME, ret);
+		return ret;
+	}
+
+    ret = register_kprobe(&kp_umount);
+    if (ret < 0) {
+        printk("%s: hook init failed, returned %d\n", MOD_NAME, ret);
+        return ret;
+    }
+
+	printk("%s: hook module correctly loaded.\n", MOD_NAME);
+	
+	return 0;
+}
+
+void hook_exit(void) {
+
+	unregister_kprobe(&kp_mount);
+    unregister_kprobe(&kp_umount);
+
+	printk("%s: hook module unloaded\n", MOD_NAME);
+
+}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
 long sys_activate_snapshot = (unsigned long) __x64_sys_activate_snapshot;
@@ -177,16 +252,19 @@ long sys_deactivate_snapshot = (unsigned long) __x64_sys_deactivate_snapshot;
 
 
 int init_module(void) {
+    
+    new_sys_call_array[0] = (unsigned long)sys_activate_snapshot;
+    new_sys_call_array[1] = (unsigned long)sys_deactivate_snapshot;
 
-    modify_syscall_table(new_sys_call_array, the_syscall_table);
+    modify_syscall_table(new_sys_call_array, the_syscall_table, the_ni_syscall, restore);
+    hook_init();
 
 }
 
 
 void cleanup_module(void) {
 
-    restore_syscall_table(the_syscall_table);
+    restore_syscall_table(the_syscall_table, the_ni_syscall, restore);
+    hook_exit();
 
 }
-
-
