@@ -46,46 +46,14 @@ int push(struct list_head *head, char *device_name, char *mount_point, bool ss_i
     return 1;
 }
 
-int pop(device_t **head) {
-    device_t *next_node = NULL;
-
-    if (*head == NULL) {
-        printk("%s: List is empty, cannot pop\n", MOD_NAME);
+int remove(device_t *device) {
+    if (device == NULL) {
+        printk("%s: Device is NULL, cannot remove\n", MOD_NAME);
         return 0;
     }
 
-    next_node = (*head)->next;
-    free(*head);
-    *head = next_node;
-
-    return 1;
-}
-
-int remove_by_index(device_t **head, int n) {
-    int i = 0;
-    device_t *current = *head;
-    device_t *temp_node = NULL;
-
-    if (n == 0) {
-        return pop(head);
-    }
-
-    for (i = 0; i < n-1; i++) {
-        if (current->next == NULL) {
-            printk("%s: Index out of bounds, cannot remove\n", MOD_NAME);
-            return 0;
-        }
-        current = current->next;
-    }
-
-    if (current->next == NULL) {
-        printk("%s: Index out of bounds, cannot remove\n", MOD_NAME);
-        return 0;
-    }
-
-    temp_node = current->next;
-    current->next = temp_node->next;
-    kfree(temp_node);
+    list_del(&device->device_list) // TODO cotrollare se va bene così
+    kfree(device);
 
     return 1;
 

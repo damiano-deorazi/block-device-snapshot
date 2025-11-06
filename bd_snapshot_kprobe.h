@@ -3,8 +3,14 @@
 
 #include <linux/atomic.h>
 #include <linux/kprobes.h>
+#include <linux/workqueue.h>
 
 #define BUFF_SIZE 256
+
+typedef struct _packed_work{
+    char* snapshot_path;
+    struct work_struct the_work;
+} packed_work;
 
 int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs);
 int monitor_umount(struct kprobe *ri, struct pt_regs *the_regs);

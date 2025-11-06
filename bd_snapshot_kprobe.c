@@ -3,6 +3,9 @@
 #include <linux/namei.h>
 #include <linux/string.h>
 #include <linux/spinlock.h>
+#include <linux/workqueue.h>
+#include <linux/kernel.h>
+#include <linux/timekeeping.h>
 
 #include "bd_snapshot_kprobe.h"
 #include "bd_snapshot_list.h"
@@ -15,10 +18,37 @@
 #define target__mount_func "__x64_sys_fsmount"
 #endif
 
+void create_snapshot_folder(struct work_struct *work) {
+    packed_work *the_task = container_of(work, packed_work, the_work);
+    char *snapshot_path = the_task->snapshot_path;
+
+    struct file *fp = (struct file *) NULL;
+
+    fp = filp_open(snapshot_path, O_DIRECTORY|O_CREAT, S_IRUSR);
+    if (IS_ERR(fp)) {
+        printk("%s: filp_open failed for %s.\n", MOD_NAME, snapshot_path);
+        kfree(snapshot_path);
+        kfree(the_task);
+        return;
+    }
+
+    printk("%s: Snapshot folder created at %s\n", MOD_NAME, snapshot_path);
+
+    filp_close(fp, NULL);
+    kfree(snapshot_path);
+    kfree(the_task);
+    return;
+}
+
 int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
     if (atomic_read(&monitor_mount_is_active) == 0) {
         return 1;
     }
+
+    struct timespec64 ts;
+    
+    // Ottiene il tempo reale (wall-clock time)
+    ktime_get_real_ts64(&ts);
 
     struct pt_regs *regs = (struct pt_regs *)the_regs->di;
     
@@ -44,7 +74,7 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
     
     struct path the_path;
 
-	fd_path = kmalloc(BUFF_SIZE, GFP_KERNEL);
+	fd_path = kmalloc(BUFF_SIZE, GFP_ATOMIC);
 
     if (!fd_path) {
         printk("%s: kmalloc failed.\n", MOD_NAME);
@@ -65,7 +95,7 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
         kfree(fd_path);
         return 0;
     }
-    // Rilascia la memoria non appena non serve più il buffer
+
     kfree(fd_path);
 	
 	// 2. Accedi al superblock attraverso il path del file
@@ -78,6 +108,20 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
 
     if (strstr(device_name, "loop") == NULL) {
 
+        char *snapshot_path = kmalloc(BUFF_SIZE, GFP_ATOMIC);
+
+        if (!snapshot_path) {
+            printk("%s: kmalloc failed for snapshot_path.\n", MOD_NAME);
+            return 0;
+        }
+    
+        if (snprintf(snapshot_path, BUFF_SIZE, "/snapshot/%s_%lld/", device_name, ts.tv_sec) < 0) {
+            printk("%s: snprintf failed for snapshot_path.\n", MOD_NAME);
+            kfree(snapshot_path);
+            return 0;
+        }
+    
+
         //controllare la lista dei dispositivi monitorati tramite snapshot e agire di conseguenza
         spin_lock(&lock);
 
@@ -86,8 +130,23 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
             
             if (device->ss_is_active == 1 && strcmp(device->device_name, device_name) == 0) {
                 device->mount_point = mount_path_buff;
+                device->ss_path = snapshot_path;
                 printk("%s: updated mount point of %s to %s\n", MOD_NAME, device->device_name, device->mount_point);
                 spin_unlock(&lock);
+
+                //creazione della cartella dello snapshot
+
+                packed_work *the_task;
+
+                the_task = kmalloc(sizeof(packed_work), GFP_ATOMIC);
+                if (the_task == NULL) {
+                    printk("%s: workqueue task allocation failure\n", MOD_NAME);
+                    return 0;
+                }
+                
+                the_task->snapshot_path = snapshot_path;
+                INIT_WORK(&(the_task->the_work), (void*)create_snapshot_folder);
+                schedule_work(&the_task->the_work);
                 return 1;
             }
         }
@@ -102,8 +161,8 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
         char *backing_file_path = NULL;
         
         // Allocazione buffer per il percorso SysFS e il percorso di ritorno
-        sysfs_path = kmalloc(BUFF_SIZE, GFP_KERNEL);
-        backing_file_path = kmalloc(BUFF_SIZE, GFP_KERNEL);
+        sysfs_path = kmalloc(BUFF_SIZE, GFP_ATOMIC);
+        backing_file_path = kmalloc(BUFF_SIZE, GFP_ATOMIC);
 
         if (!sysfs_path || !backing_file_path) {
             printk("%s: kmalloc allocazione memoria fallita.\n", MOD_NAME);
@@ -151,13 +210,44 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
 
         //controllare la lista dei dispositivi monitorati tramite snapshot e agire di conseguenza utilizzando backing_file_path come device_name
         spin_lock(&lock);
+        
+        char *snapshot_path = kmalloc(BUFF_SIZE, GFP_ATOMIC);
+
+        if (!snapshot_path) {
+            printk("%s: kmalloc failed for snapshot_path.\n", MOD_NAME);
+            return 0;
+        }
+
+        //TODO verificare che il primo caraattere di backing_file_path sia '/' o gestire il caso contrario 
+        if (snprintf(snapshot_path, BUFF_SIZE, "/snapshot%s_%lld/", backing_file_path, ts.tv_sec) < 0) {
+            printk("%s: snprintf failed for snapshot_path.\n", MOD_NAME);
+            kfree(snapshot_path);
+            return 0;
+        }
+
         device_t *device = NULL;
+        
         list_for_each_entry (device, &dev_list_head, device_list) { 
             
             if (device->ss_is_active == 1 && strcmp(device->device_name, backing_file_path) == 0) {
                 device->mount_point = mount_path_buff;
+                device->ss_path = snapshot_path;
                 printk("%s: updated mount point of %s to %s\n", MOD_NAME, device->device_name, device->mount_point);
                 spin_unlock(&lock);
+
+                //TODO creare cartella dello snapshot
+
+                packed_work *the_task;
+                the_task = kmalloc(sizeof(packed_work), GFP_ATOMIC);
+                if (the_task == NULL) {
+                    printk("%s: workqueue task allocation failure\n", MOD_NAME);
+                    return 0;
+                }
+                
+                the_task->snapshot_path = snapshot_path;
+                INIT_WORK(&(the_task->the_work), (void*)create_snapshot_folder);
+                schedule_work(&the_task->the_work);
+
                 return 1;
             }
         }
@@ -201,8 +291,14 @@ int monitor_umount(struct kprobe *ri, struct pt_regs *the_regs) {
     list_for_each_entry(device, &dev_list_head, device_list) { 
         
         if (device->ss_is_active == 0 && strcmp(device->mount_point, mount_path_buff) == 0) {
-            device->mount_point = "";
-            printk("%s: reset of %s mount point \n", MOD_NAME, device->device_name);
+            /*device->mount_point = "";
+            printk("%s: reset of %s mount point \n", MOD_NAME, device->device_name);*/
+            char *d_name = device->device_name;
+            remove(device);
+
+            //TODO valutare se andare a rimuovere la cartella snapshot associata (non viene comunque utilizzata da nessuno)
+
+            printk("%s: Device %s unregistered\n", MOD_NAME, d_name);
             spin_unlock(&lock);
             return 1;
         }
