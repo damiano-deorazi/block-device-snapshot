@@ -3,6 +3,7 @@
 
 #include <linux/list.h>
 #include <linux/spinlock.h>
+#include <linux/types.h>
 
 #define SIZE 256
 
@@ -10,6 +11,7 @@
 typedef struct device {
     char device_name[SIZE];
     char mount_point[SIZE];
+    dev_t bd_dev;
     char ss_path[SIZE];
     bool ss_is_active;    
     struct list_head device_list;

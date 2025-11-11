@@ -8,7 +8,9 @@
 #define BUFF_SIZE 256
 
 typedef struct _packed_work{
-    char* snapshot_path;
+    char *snapshot_path;
+    sector_t block_number;
+    char *b_data;
     struct work_struct the_work;
 } packed_work;
 

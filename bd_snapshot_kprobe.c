@@ -6,6 +6,8 @@
 #include <linux/workqueue.h>
 #include <linux/kernel.h>
 #include <linux/timekeeping.h>
+#include <linux/kdev_t.h>
+#include <linux/major.h>
 
 #include "bd_snapshot_kprobe.h"
 #include "bd_snapshot_list.h"
@@ -27,7 +29,7 @@ void create_snapshot_folder(struct work_struct *work) {
     fp = filp_open(snapshot_path, O_DIRECTORY|O_CREAT, S_IRUSR);
     if (IS_ERR(fp)) {
         printk("%s: filp_open failed for %s.\n", MOD_NAME, snapshot_path);
-        kfree(snapshot_path);
+        //kfree(snapshot_path);
         kfree(the_task);
         return;
     }
@@ -35,6 +37,46 @@ void create_snapshot_folder(struct work_struct *work) {
     printk("%s: Snapshot folder created at %s\n", MOD_NAME, snapshot_path);
 
     filp_close(fp, NULL);
+    //kfree(snapshot_path);
+    kfree(the_task);
+    return;
+}
+
+void write_on_snapshot_folder(struct work_struct *work) {
+    packed_work *the_task = container_of(work, packed_work, the_work);
+    char *snapshot_path = the_task->snapshot_path;
+    sector_t block_number = the_task->block_number;
+    struct buffer_head* bh = the_task->bh;
+
+    char *snapshot_file_path = NULL;
+    snapshot_file_path = kmalloc(BUFF_SIZE, GFP_ATOMIC);
+
+    if (!snapshot_file_path) {
+        printk("%s: kmalloc failed for snapshot_file_path.\n", MOD_NAME);
+        return 0;
+    }
+
+    //TODO verificare il formato corretto del nome del file
+    if (snprintf(snapshot_file_path, BUFF_SIZE, "snapshot") < 0) {
+        printk("%s: snprintf failed for snapshot_path.\n", MOD_NAME);
+        kfree(the_task);
+        return 0;
+    }
+
+    struct file *fp = (struct file *) NULL;
+
+    fp = filp_open(snapshot_file_path, O_RDWR|O_APPEND|O_CREAT, S_IRUSR); //TODO verificare flag corretti
+    if (IS_ERR(fp)) {
+        printk("%s: filp_open failed for %s.\n", MOD_NAME, snapshot_path);
+        //kfree(snapshot_path);
+        kfree(the_task);
+        return;
+    }
+
+    //TODO scrittura del blocco sul file snapshot se non presente, altrimenti skip
+
+    printk("%s: Write operation on snapshot folder at %s\n", MOD_NAME, snapshot_path);
+
     kfree(snapshot_path);
     kfree(the_task);
     return;
@@ -101,12 +143,13 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
 	// 2. Accedi al superblock attraverso il path del file
 	// f_path.mnt->mnt_sb è la catena di navigazione
 
-    struct super_block *sb = path.mnt->mnt_sb;
-	char *device_name = sb->s_id;
+    struct super_block *sb = the_path.mnt->mnt_sb;
+    dev_t bd_dev = sb->s_dev;
+    char *device_name = sb->s_id;
 
     path_put(&the_path);
 
-    if (strstr(device_name, "loop") == NULL) {
+    if (MAJOR(bd_dev) != LOOP_MAJOR) {
 
         char *snapshot_path = kmalloc(BUFF_SIZE, GFP_ATOMIC);
 
@@ -121,7 +164,6 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
             return 0;
         }
     
-
         //controllare la lista dei dispositivi monitorati tramite snapshot e agire di conseguenza
         spin_lock(&lock);
 
@@ -131,6 +173,7 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
             if (device->ss_is_active == 1 && strcmp(device->device_name, device_name) == 0) {
                 device->mount_point = mount_path_buff;
                 device->ss_path = snapshot_path;
+                device->bd_dev = bd_dev;
                 printk("%s: updated mount point of %s to %s\n", MOD_NAME, device->device_name, device->mount_point);
                 spin_unlock(&lock);
 
@@ -232,10 +275,11 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
             if (device->ss_is_active == 1 && strcmp(device->device_name, backing_file_path) == 0) {
                 device->mount_point = mount_path_buff;
                 device->ss_path = snapshot_path;
+                device->bd_dev = bd_dev;
                 printk("%s: updated mount point of %s to %s\n", MOD_NAME, device->device_name, device->mount_point);
                 spin_unlock(&lock);
 
-                //TODO creare cartella dello snapshot
+                //creazione cartella dello snapshot
 
                 packed_work *the_task;
                 the_task = kmalloc(sizeof(packed_work), GFP_ATOMIC);
@@ -305,6 +349,52 @@ int monitor_umount(struct kprobe *ri, struct pt_regs *the_regs) {
     }
 
     spin_unlock(&lock);
+
+    return 1;
+}
+
+int monitor_write_op(struct kprobe *ri, struct pt_regs *the_regs) {
+
+    struct block_device *block_dev = (struct block_device *)the_regs->di;
+    sector_t block = (sector_t)the_regs->si;
+
+    dev_t bd_dev = bdev->bd_dev;
+
+    device_t *device = NULL; 
+
+    spin_lock(&lock);
+
+    list_for_each_entry(device, &dev_list_head, device_list) { 
+        
+        if (device->ss_is_active == 1 && device->bd_dev == bd_dev) {
+            char *snapshot_path = device->ss_path;
+            
+            spin_unlock(&lock);
+
+            //TODO scrivere sullo snapshot
+
+            packed_work *the_task;
+            the_task = kmalloc(sizeof(packed_work), GFP_ATOMIC);
+            if (the_task == NULL) {
+                printk("%s: workqueue task allocation failure\n", MOD_NAME);
+                return 0;
+            }
+            
+            the_task->snapshot_path = snapshot_path;
+            the_task->block_number = block;
+            the_task->b_data = NULL; //TODO passare i dati del buffer head corretto (prenderlo dal ritorno della kprobe)
+            INIT_WORK(&(the_task->the_work), (void*)write_on_snapshot_folder);
+            schedule_work(&the_task->the_work);
+
+            return 1;
+        }
+    }
+
+    spin_unlock(&lock);
+
+    printk("%s: __bread_gfp invoked on loop device: %s (major: %d, minor: %d) at block number: %llu, block size: %u\n", MOD_NAME, device, major, minor, block, size);
+
+    
 
     return 1;
 }
