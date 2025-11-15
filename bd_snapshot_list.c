@@ -1,6 +1,8 @@
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/slab.h> 
+#include <linux/spinlock.h>
+#include <linux/mutex.h>
 
 #include "bd_snapshot_list.h"
 #include "bd_snapshot.h"
@@ -24,7 +26,7 @@ device_t *search_device(char *device_name) {
     return NULL;
 }
 
-int push(struct list_head *head, char *device_name, char *mount_point, bool ss_is_active) {
+int push(struct list_head *head, char *device_name) {
 
     device_t *new_device;
     //TODO decidere se utilizzare kmalloc (utile per allocazione < PAGSIZE, memoria fisica contigua) o vmalloc (utile per allocazione > PAGSIZE, memoria fisica non contigua)
@@ -38,8 +40,9 @@ int push(struct list_head *head, char *device_name, char *mount_point, bool ss_i
     }
     
     new_device->device_name = device_name;
-    new_device->mount_point = mount_point;
-    new_device->ss_is_active = ss_is_active;
+    new_device->mount_point = NULL;
+    new_device->ss_is_active = 1;
+    mutex_init(&new_device->snapshot_lock);    
     
     list_add(&new_device->device_list, head);
 

@@ -16,6 +16,7 @@
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
 #define target_mount_func "__x64_sys_move_mount"
 #define target_umount_func "__x64_sys_umount"
+#define target_write_func "__bread_gfp"
 #else
 #define target__mount_func "__x64_sys_fsmount"
 #endif
@@ -45,40 +46,103 @@ void create_snapshot_folder(struct work_struct *work) {
 void write_on_snapshot_folder(struct work_struct *work) {
     packed_work *the_task = container_of(work, packed_work, the_work);
     char *snapshot_path = the_task->snapshot_path;
-    sector_t block_number = the_task->block_number;
+    struct mutex *snapshot_lock = the_task->snapshot_lock;
     struct buffer_head* bh = the_task->bh;
+    sector_t block_number = bh->b_blocknr;
+    char *data = bh->b_data;
 
     char *snapshot_file_path = NULL;
     snapshot_file_path = kmalloc(BUFF_SIZE, GFP_ATOMIC);
 
     if (!snapshot_file_path) {
         printk("%s: kmalloc failed for snapshot_file_path.\n", MOD_NAME);
-        return 0;
+        return;
     }
 
     //TODO verificare il formato corretto del nome del file
     if (snprintf(snapshot_file_path, BUFF_SIZE, "snapshot") < 0) {
         printk("%s: snprintf failed for snapshot_path.\n", MOD_NAME);
+        kfree(snapshot_file_path);
         kfree(the_task);
-        return 0;
+        return;
     }
+
+    mutex_lock(snapshot_lock);
 
     struct file *fp = (struct file *) NULL;
 
     fp = filp_open(snapshot_file_path, O_RDWR|O_APPEND|O_CREAT, S_IRUSR); //TODO verificare flag corretti
     if (IS_ERR(fp)) {
         printk("%s: filp_open failed for %s.\n", MOD_NAME, snapshot_path);
-        //kfree(snapshot_path);
+        kfree(snapshot_file_path);
         kfree(the_task);
         return;
     }
 
-    //TODO scrittura del blocco sul file snapshot se non presente, altrimenti skip
+    packed_data *read_data = NULL;
+    read_data = kmalloc(sizeof(packed_data), GFP_ATOMIC);
+    if (!read_data) {
+        printk("%s: kmalloc failed for read_data.\n", MOD_NAME);
+        filp_close(fp, NULL);
+        kfree(snapshot_file_path);
+        kfree(the_task);
+        return;
+    }
 
-    printk("%s: Write operation on snapshot folder at %s\n", MOD_NAME, snapshot_path);
+    for (;;) {
+        ssize_t bytes_read = kernel_read(fp, read_data, sizeof(packed_data), &fp->f_pos);
 
-    kfree(snapshot_path);
+        if (bytes_read < 0) {
+            mutex_unlock(snapshot_lock);
+            printk("%s: kernel_read failed for %s.\n", MOD_NAME, snapshot_file_path);
+            kfree(read_data);
+            filp_close(fp, NULL);
+            kfree(snapshot_file_path);
+            kfree(the_task);
+            return;
+        } else if (bytes_read == 0) {
+            // Fine del file raggiunta
+            break;
+        }
+
+        if (read_data->block_number == block_number) {
+            printk("%s: Block number %llu already exists in snapshot file %s. Skipping write.\n", MOD_NAME, block_number, snapshot_file_path);
+            kfree(read_data);
+            mutex_unlock(snapshot_lock);
+            kfree(snapshot_file_path);
+            kfree(the_task);
+            filp_close(fp, NULL);
+            return;
+        }
+    }
+
+    packed_data *data_to_write = NULL;
+    data_to_write = kmalloc(sizeof(packed_data), GFP_ATOMIC);
+    if (!data_to_write) {
+        mutex_unlock(snapshot_lock);
+        printk("%s: kmalloc failed for data_to_write.\n", MOD_NAME);
+        filp_close(fp, NULL);
+        kfree(snapshot_file_path);
+        kfree(the_task);
+        return;
+    }
+    data_to_write->block_number = block_number;
+    data_to_write->data = memcpy(data_to_write->data, data, strlen(data));
+
+    ssize_t bytes_written = kernel_write(fp, data_to_write, sizeof(packed_data), &fp->f_pos);
+
+    if (bytes_written < 0) {
+        printk("%s: kernel_write failed for %s.\n", MOD_NAME, snapshot_file_path);
+    } else { 
+        printk("%s: Wrote %zd bytes to snapshot file %s (block number %llu).\n", MOD_NAME, bytes_written, snapshot_file_path, block_number);
+    }
+
+    mutex_unlock(snapshot_lock);
+    kfree(data_to_write);
+    kfree(snapshot_file_path);
     kfree(the_task);
+    filp_close(fp, NULL);
+
     return;
 }
 
@@ -306,7 +370,7 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
 int monitor_umount(struct kprobe *ri, struct pt_regs *the_regs) {
     
     if (atomic_read(&monitor_umount_is_active) == 0) {
-        return 1;
+        return 0;
     }
 
     struct pt_regs *regs = (struct pt_regs *)the_regs->di;
@@ -344,21 +408,20 @@ int monitor_umount(struct kprobe *ri, struct pt_regs *the_regs) {
 
             printk("%s: Device %s unregistered\n", MOD_NAME, d_name);
             spin_unlock(&lock);
-            return 1;
+            return 0;
         }
     }
 
     spin_unlock(&lock);
 
-    return 1;
+    return 0;
 }
 
-int monitor_write_op(struct kprobe *ri, struct pt_regs *the_regs) {
+int monitor_write_op(struct kretprobe_instance *ri, struct pt_regs *the_regs) {
 
-    struct block_device *block_dev = (struct block_device *)the_regs->di;
-    sector_t block = (sector_t)the_regs->si;
+    struct buffer_head *bh = (struct buffer_head *)regs_return_value(the_regs);
 
-    dev_t bd_dev = bdev->bd_dev;
+    dev_t bd_dev = bh->b_bdev->bd_dev;
 
     device_t *device = NULL; 
 
@@ -368,6 +431,7 @@ int monitor_write_op(struct kprobe *ri, struct pt_regs *the_regs) {
         
         if (device->ss_is_active == 1 && device->bd_dev == bd_dev) {
             char *snapshot_path = device->ss_path;
+            struct mutex *snapshot_lock = &device->snapshot_lock;
             
             spin_unlock(&lock);
 
@@ -381,22 +445,18 @@ int monitor_write_op(struct kprobe *ri, struct pt_regs *the_regs) {
             }
             
             the_task->snapshot_path = snapshot_path;
-            the_task->block_number = block;
-            the_task->b_data = NULL; //TODO passare i dati del buffer head corretto (prenderlo dal ritorno della kprobe)
+            the_task->snapshot_lock = snapshot_lock;
+            the_task->bh = bh;
             INIT_WORK(&(the_task->the_work), (void*)write_on_snapshot_folder);
             schedule_work(&the_task->the_work);
 
-            return 1;
+            return 0;
         }
     }
 
-    spin_unlock(&lock);
+    spin_unlock(&lock);    
 
-    printk("%s: __bread_gfp invoked on loop device: %s (major: %d, minor: %d) at block number: %llu, block size: %u\n", MOD_NAME, device, major, minor, block, size);
-
-    
-
-    return 1;
+    return 0;
 }
 
 struct kprobe kp_mount = {
@@ -409,3 +469,7 @@ struct kprobe kp_umount = {
     .post_handler = (kprobe_post_handler_t)monitor_umount,
 };
 
+struct kretprobe krp_write = {
+    .kp.symbol_name = target_write_func,
+    .handler = (kretprobe_handler_t)monitor_write_op,
+};

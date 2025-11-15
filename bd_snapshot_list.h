@@ -3,6 +3,7 @@
 
 #include <linux/list.h>
 #include <linux/spinlock.h>
+#include <linux/mutex.h>
 #include <linux/types.h>
 
 #define SIZE 256
@@ -13,13 +14,14 @@ typedef struct device {
     char mount_point[SIZE];
     dev_t bd_dev;
     char ss_path[SIZE];
-    bool ss_is_active;    
+    bool ss_is_active;   
+    struct mutex snapshot_lock;
     struct list_head device_list;
 } device_t;
 
 device_t *search_device(char *device_name);
 
-int push(struct list_head *head, char *device_name, char *mount_point, bool ss_is_active);
+int push(struct list_head *head, char *device_name);
 
 int remove(device_t *device);
 

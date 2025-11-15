@@ -97,7 +97,7 @@ asmlinkage long sys_activate_snapshot(char *dev_name, char *password){
 
     if (device_registered == NULL) {
 
-        if(!push(&dev_list_head, dev_name, NULL, 1)) {
+        if(!push(&dev_list_head, dev_name)) {
 
             spin_unlock(&lock);
             printk("%s: Error registering device\n", MOD_NAME);

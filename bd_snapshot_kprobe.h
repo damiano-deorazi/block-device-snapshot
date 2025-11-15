@@ -9,10 +9,16 @@
 
 typedef struct _packed_work{
     char *snapshot_path;
-    sector_t block_number;
-    char *b_data;
+    struct mutex *snapshot_lock;
+    struct buffer_head* bh;
     struct work_struct the_work;
 } packed_work;
+
+typedef struct _packed_data{
+    sector_t block_number;
+    char data[4096];
+} packed_data;
+
 
 int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs);
 int monitor_umount(struct kprobe *ri, struct pt_regs *the_regs);
