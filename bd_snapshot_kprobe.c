@@ -237,7 +237,8 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
             if (device->ss_is_active == 1 && strcmp(device->device_name, device_name) == 0) {
                 device->mount_point = mount_path_buff;
                 device->ss_path = snapshot_path;
-                device->bd_dev = bd_dev;
+                device->super_block = sb;
+                //device->bd_dev = bd_dev;
                 printk("%s: updated mount point of %s to %s\n", MOD_NAME, device->device_name, device->mount_point);
                 spin_unlock(&lock);
 
@@ -302,6 +303,7 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
             if (backing_file_path[bytes_read - 1] == '\n') {
                 bytes_read--;
             }
+
             backing_file_path[bytes_read] = '\0';
             
             // Successo: liberiamo solo il buffer del path SysFS e restituiamo il percorso letto
@@ -339,7 +341,8 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
             if (device->ss_is_active == 1 && strcmp(device->device_name, backing_file_path) == 0) {
                 device->mount_point = mount_path_buff;
                 device->ss_path = snapshot_path;
-                device->bd_dev = bd_dev;
+                device->super_block = sb;
+                //device->bd_dev = bd_dev;
                 printk("%s: updated mount point of %s to %s\n", MOD_NAME, device->device_name, device->mount_point);
                 spin_unlock(&lock);
 
@@ -417,25 +420,27 @@ int monitor_umount(struct kprobe *ri, struct pt_regs *the_regs) {
     return 0;
 }
 
-int monitor_write_op(struct kretprobe_instance *ri, struct pt_regs *the_regs) {
+int monitor_write(struct kretprobe_instance *ri, struct pt_regs *the_regs) {
+
+    if (atomic_read(&monitor_umount_is_active) == 0) {
+        return 0;
+    }
 
     struct buffer_head *bh = (struct buffer_head *)regs_return_value(the_regs);
 
     dev_t bd_dev = bh->b_bdev->bd_dev;
 
-    device_t *device = NULL; 
+    device_t *device = NULL;
 
     spin_lock(&lock);
 
     list_for_each_entry(device, &dev_list_head, device_list) { 
         
-        if (device->ss_is_active == 1 && device->bd_dev == bd_dev) {
+        if (device->ss_is_active == 1 && device->sb->s_dev == bd_dev) {
             char *snapshot_path = device->ss_path;
             struct mutex *snapshot_lock = &device->snapshot_lock;
             
             spin_unlock(&lock);
-
-            //TODO scrivere sullo snapshot
 
             packed_work *the_task;
             the_task = kmalloc(sizeof(packed_work), GFP_ATOMIC);
@@ -471,5 +476,5 @@ struct kprobe kp_umount = {
 
 struct kretprobe krp_write = {
     .kp.symbol_name = target_write_func,
-    .handler = (kretprobe_handler_t)monitor_write_op,
+    .handler = (kretprobe_handler_t)monitor_write,
 };

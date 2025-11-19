@@ -19,7 +19,6 @@ typedef struct _packed_data{
     char data[4096];
 } packed_data;
 
-
 int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs);
 int monitor_umount(struct kprobe *ri, struct pt_regs *the_regs);
 
@@ -30,5 +29,6 @@ extern atomic_t monitor_umount_is_active;
 //bd_snapshot_kprobe.c
 extern struct kprobe kp_mount;
 extern struct kprobe kp_umount;
+extern struct kretprobe krp_write;
 
 #endif

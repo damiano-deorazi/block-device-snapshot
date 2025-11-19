@@ -12,7 +12,8 @@
 typedef struct device {
     char device_name[SIZE];
     char mount_point[SIZE];
-    dev_t bd_dev;
+    struct super_block *sb;
+    //dev_t bd_dev;
     char ss_path[SIZE];
     bool ss_is_active;   
     struct mutex snapshot_lock;

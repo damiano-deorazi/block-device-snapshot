@@ -1,4 +1,5 @@
-obj-m += bd_snapshot_kprobe.o
+obj-m += bd_snapshot.o
+bd_snapshot-objs += bd_snapshot_list.o bd_snapshot_kprobe.o syscall_table_mod.o 
 
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
