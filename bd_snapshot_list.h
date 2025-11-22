@@ -9,7 +9,7 @@
 #define SIZE 256
 
 //struct per la gestione della lista (collegata) dei dispositivi
-typedef struct device {
+typedef struct {
     char device_name[SIZE];
     char mount_point[SIZE];
     struct super_block *sb;

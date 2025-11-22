@@ -1,6 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <string.h>
+#include <unistd.h>
+
+#include "bd_snapshot.h"
 
 #define SIZE 256
 #define AUDIT if (1)
@@ -16,7 +20,10 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    int ret = activate_snapshot(device_name, password);
+    int ret;
+
+    //ret = activate_snapshot(device_name, password);
+    ret = syscall(333, device_name, password); // assuming 333 is the syscall number for activate_snapshot
     if (ret == 0) {
         printf("Failed to activate snapshot for device %s\n", device_name);
         return EXIT_FAILURE;
@@ -41,7 +48,8 @@ int main() {
 
     // attivare/disattivare per il testing dello snapshot durante le operazioni di scrittura
     AUDIT {
-        ret = deactivate_snapshot(device_name, password);
+        //ret = deactivate_snapshot(device_name, password);
+        ret = syscall(334, device_name, password); // assuming 334 is the syscall number for deactivate_snapshot
         if (ret == 0) {
             printf("Failed to deactivate snapshot for device %s\n", device_name);
             return EXIT_FAILURE;
@@ -58,7 +66,7 @@ int main() {
 
     printf("Wrote %zd bytes to the file.\n", bytes_written);
 
-    ssize_t bytes_read = read(fd, read_data, SIZE);
+    bytes_read = read(fd, read_data, SIZE);
     if (bytes_read < 0) {
         perror("Failed to read from the file");
         return EXIT_FAILURE;    
@@ -66,7 +74,9 @@ int main() {
 
     printf("Read modified data: %s\n", read_data);
 
-    ret = restore_snapshot(device_name, password);
+    //ret = restore_snapshot(device_name, password);
+    ret = syscall(335, device_name, password); // assuming 335 is the syscall number for restore_snapshot
+
     if (ret == 0) {
         printf("Failed to restore snapshot for device %s\n", device_name);
         return EXIT_FAILURE;     
@@ -74,7 +84,7 @@ int main() {
 
     printf("Snapshot restored successfully for device %s\n", device_name);
 
-    ssize_t bytes_read = read(fd, read_data, SIZE);
+    bytes_read = read(fd, read_data, SIZE);
     if (bytes_read < 0) {
         perror("Failed to read from the file");
         return EXIT_FAILURE;    
@@ -82,7 +92,8 @@ int main() {
 
     printf("Read data after snapshot restoration: %s\n", read_data);
 
-    ret = deactivate_snapshot(device_name, password);
+    //ret = deactivate_snapshot(device_name, password);
+    ret = syscall(334, device_name, password); // assuming 334 is the syscall number for deactivate_snapshot
     if (ret == 0) {
         printf("Failed to deactivate snapshot for device %s\n", device_name);
         return EXIT_FAILURE;

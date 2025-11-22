@@ -20,7 +20,6 @@ device_t *search_device(char *device_name) {
         if (strcmp(pos->device_name, device_name) == 0) {
             return pos;
         }
-    
     }
 
     return NULL;
@@ -30,7 +29,7 @@ int push(struct list_head *head, char *device_name) {
 
     device_t *new_device;
     //TODO decidere se utilizzare kmalloc (utile per allocazione < PAGSIZE, memoria fisica contigua) o vmalloc (utile per allocazione > PAGSIZE, memoria fisica non contigua)
-    new_device = (device_t *) kmalloc(sizeof(device_t));
+    new_device = (device_t *) kmalloc(sizeof(device_t), GFP_KERNEL);
 
     if (new_device == NULL) {
         
@@ -39,8 +38,7 @@ int push(struct list_head *head, char *device_name) {
     
     }
     
-    new_device->device_name = device_name;
-    new_device->mount_point = NULL;
+    strncpy(new_device->device_name, device_name, SIZE);
     new_device->ss_is_active = 1;
     mutex_init(&new_device->snapshot_lock);    
     
@@ -55,7 +53,7 @@ int remove(device_t *device) {
         return 0;
     }
 
-    list_del(&device->device_list) // TODO cotrollare se va bene così
+    list_del(&device->device_list); // TODO cotrollare se va bene così
     kfree(device);
 
     return 1;

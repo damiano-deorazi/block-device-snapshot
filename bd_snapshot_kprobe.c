@@ -8,18 +8,15 @@
 #include <linux/timekeeping.h>
 #include <linux/kdev_t.h>
 #include <linux/major.h>
+#include <linux/buffer_head.h>
 
 #include "bd_snapshot_kprobe.h"
 #include "bd_snapshot_list.h"
 #include "bd_snapshot.h"
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
 #define target_mount_func "__x64_sys_move_mount"
 #define target_umount_func "__x64_sys_umount"
 #define target_write_func "__bread_gfp"
-#else
-#define target__mount_func "__x64_sys_fsmount"
-#endif
 
 void create_snapshot_folder(struct work_struct *work) {
     packed_work *the_task = container_of(work, packed_work, the_work);
@@ -127,7 +124,7 @@ void write_on_snapshot_folder(struct work_struct *work) {
         return;
     }
     data_to_write->block_number = block_number;
-    data_to_write->data = memcpy(data_to_write->data, data, strlen(data));
+    memcpy(data_to_write->data, data, strlen(data));
 
     ssize_t bytes_written = kernel_write(fp, data_to_write, sizeof(packed_data), &fp->f_pos);
 
@@ -188,7 +185,7 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
     }
 
     // 2. Costruisci la stringa del percorso: /proc/self/fd/<dfd>
-    if (snprintf(fd_path, BUFF_SIZE, "/proc/self/fd/%d", fd)) < 0 {
+    if (snprintf(fd_path, BUFF_SIZE, "/proc/self/fd/%d", fd) < 0) {
         printk("%s: snprintf failed.\n", MOD_NAME);
         kfree(fd_path);
         return 0;
@@ -235,10 +232,11 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
         list_for_each_entry (device, &dev_list_head, device_list) { 
             
             if (device->ss_is_active == 1 && strcmp(device->device_name, device_name) == 0) {
-                device->mount_point = mount_path_buff;
-                device->ss_path = snapshot_path;
-                device->super_block = sb;
-                //device->bd_dev = bd_dev;
+                
+                strcpy(device->mount_point, mount_path_buff);
+                strcpy(device->ss_path, snapshot_path);
+                device->sb = sb;
+                
                 printk("%s: updated mount point of %s to %s\n", MOD_NAME, device->device_name, device->mount_point);
                 spin_unlock(&lock);
 
@@ -288,7 +286,7 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
         filploop = filp_open(sysfs_path, O_RDONLY, 0);
 
         if (IS_ERR(filploop)) {
-            printk("%s: Impossibile aprire %s (Errore: %ld).\n", sysfs_path, PTR_ERR(filploop), MOD_NAME);
+            printk("%s: Impossibile aprire %s (Errore: %ld).\n", MOD_NAME, sysfs_path, PTR_ERR(filploop));
             return 0;
         }
         
@@ -339,9 +337,11 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
         list_for_each_entry (device, &dev_list_head, device_list) { 
             
             if (device->ss_is_active == 1 && strcmp(device->device_name, backing_file_path) == 0) {
-                device->mount_point = mount_path_buff;
-                device->ss_path = snapshot_path;
-                device->super_block = sb;
+                //device->mount_point = mount_path_buff;
+                strcpy(device->mount_point, mount_path_buff);
+                //device->ss_path = snapshot_path;
+                strcpy(device->ss_path, snapshot_path);
+                device->sb = sb;
                 //device->bd_dev = bd_dev;
                 printk("%s: updated mount point of %s to %s\n", MOD_NAME, device->device_name, device->mount_point);
                 spin_unlock(&lock);
@@ -402,14 +402,23 @@ int monitor_umount(struct kprobe *ri, struct pt_regs *the_regs) {
     list_for_each_entry(device, &dev_list_head, device_list) { 
         
         if (device->ss_is_active == 0 && strcmp(device->mount_point, mount_path_buff) == 0) {
-            /*device->mount_point = "";
-            printk("%s: reset of %s mount point \n", MOD_NAME, device->device_name);*/
-            char *d_name = device->device_name;
+            
+            printk("%s: Removing %s device\n", MOD_NAME, device->device_name);
+
             remove(device);
+
+            printk("%s: Removed\n", MOD_NAME);
 
             //TODO valutare se andare a rimuovere la cartella snapshot associata (non viene comunque utilizzata da nessuno)
 
-            printk("%s: Device %s unregistered\n", MOD_NAME, d_name);
+            spin_unlock(&lock);
+            return 0;
+        }
+
+        if (device->ss_is_active == 1 && strcmp(device->mount_point, mount_path_buff) == 0) {
+
+            device->mount_point[0] = '\0';
+            printk("%s: reset of %s mount point \n", MOD_NAME, device->device_name);
             spin_unlock(&lock);
             return 0;
         }
@@ -465,13 +474,13 @@ int monitor_write(struct kretprobe_instance *ri, struct pt_regs *the_regs) {
 }
 
 struct kprobe kp_mount = {
-    .symbol_name = target_monut_func,
-    .post_handler = (kprobe_post_handler_t)monitor_mount,
+    .symbol_name = target_mount_func,
+    .pre_handler = (kprobe_pre_handler_t)monitor_mount,
 };
 
 struct kprobe kp_umount = {
     .symbol_name = target_umount_func,
-    .post_handler = (kprobe_post_handler_t)monitor_umount,
+    .pre_handler = (kprobe_pre_handler_t)monitor_umount,
 };
 
 struct kretprobe krp_write = {

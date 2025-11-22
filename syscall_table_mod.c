@@ -48,4 +48,6 @@ int restore_syscall_table(unsigned long syscall_table_addr, unsigned long ni_sys
     protect_memory();
     
     printk("%s: sys-call table restored to its original content\n", MOD_NAME);
+
+    return 1;
 }
