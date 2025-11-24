@@ -28,7 +28,7 @@ device_t *search_device(char *device_name) {
 int push(struct list_head *head, char *device_name) {
 
     device_t *new_device;
-    //TODO decidere se utilizzare kmalloc (utile per allocazione < PAGSIZE, memoria fisica contigua) o vmalloc (utile per allocazione > PAGSIZE, memoria fisica non contigua)
+
     new_device = (device_t *) kmalloc(sizeof(device_t), GFP_KERNEL);
 
     if (new_device == NULL) {
@@ -53,7 +53,7 @@ int remove(device_t *device) {
         return 0;
     }
 
-    list_del(&device->device_list); // TODO cotrollare se va bene così
+    list_del(&device->device_list);
     kfree(device);
 
     return 1;

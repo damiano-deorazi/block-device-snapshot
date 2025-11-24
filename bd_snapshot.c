@@ -484,9 +484,9 @@ int __init hook_init(void) {
     protect_memory();
 
     printk("%s: all new system-calls correctly installed on sys-call table\n", MOD_NAME);
-    printk("%s: %s is at table entry %d\n", MOD_NAME, "_change_state", restore[0]);
-    printk("%s: %s is at table entry %d\n", MOD_NAME, "_edit_paths", restore[1]);
-    printk("%s: %s is at table entry %d\n", MOD_NAME, "_change_password", restore[2]);
+    printk("%s: %s is at table entry %d\n", MOD_NAME, "_activate_snapshot", restore[0]);
+    printk("%s: %s is at table entry %d\n", MOD_NAME, "_deactivate_snapshot", restore[1]);
+    printk("%s: %s is at table entry %d\n", MOD_NAME, "_restore_snapshot", restore[2]);
 
 	ret = register_kprobe(&kp_mount);
 
@@ -509,7 +509,7 @@ int __init hook_init(void) {
 
 	printk("%s: hook module correctly loaded.\n", MOD_NAME);
 	
-	return 0;
+	return 1;
 }
 
 void __exit hook_exit(void) {
@@ -534,24 +534,6 @@ void __exit hook_exit(void) {
 	printk("%s: hook module unloaded\n", MOD_NAME);
 
 }
-  
-
-/*int init_module(void) {
-
-    int ret;
-
-    ret = hook_init();
-
-    return ret;
-
-}
-
-
-void cleanup_module(void) {
-
-    hook_exit();
-
-}*/
 
 module_init(hook_init);
 module_exit(hook_exit);

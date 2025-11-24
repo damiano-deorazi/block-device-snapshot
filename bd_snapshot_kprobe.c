@@ -27,7 +27,7 @@ void create_snapshot_folder(struct work_struct *work) {
     fp = filp_open(snapshot_path, O_DIRECTORY|O_CREAT, S_IRUSR);
     if (IS_ERR(fp)) {
         printk("%s: filp_open failed for %s.\n", MOD_NAME, snapshot_path);
-        //kfree(snapshot_path);
+        kfree(snapshot_path);
         kfree(the_task);
         return;
     }
@@ -35,7 +35,7 @@ void create_snapshot_folder(struct work_struct *work) {
     printk("%s: Snapshot folder created at %s\n", MOD_NAME, snapshot_path);
 
     filp_close(fp, NULL);
-    //kfree(snapshot_path);
+    kfree(snapshot_path);
     kfree(the_task);
     return;
 }
@@ -184,15 +184,12 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
         return 0;
     }
 
-    // 2. Costruisci la stringa del percorso: /proc/self/fd/<dfd>
     if (snprintf(fd_path, BUFF_SIZE, "/proc/self/fd/%d", fd) < 0) {
         printk("%s: snprintf failed.\n", MOD_NAME);
         kfree(fd_path);
         return 0;
     }
 
-    // 3. Risolvi il percorso usando l'esportata kern_path (risoluzione del path assoluto)
-    // Usiamo LOOKUP_FOLLOW per seguire il symlink da /proc/self/fd/<dfd> all'oggetto reale.
     if (kern_path(fd_path, LOOKUP_FOLLOW, &the_path) < 0){
         printk("%s: kern_path failed for %s.\n", MOD_NAME, fd_path);
         kfree(fd_path);
@@ -200,9 +197,6 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
     }
 
     kfree(fd_path);
-	
-	// 2. Accedi al superblock attraverso il path del file
-	// f_path.mnt->mnt_sb è la catena di navigazione
 
     struct super_block *sb = the_path.mnt->mnt_sb;
     dev_t bd_dev = sb->s_dev;
@@ -278,6 +272,8 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
         // 1. Costruisci il percorso SysFS (es. /sys/block/loop0/loop/backing_file)
         if (snprintf(sysfs_path, BUFF_SIZE, "/sys/block/%s/loop/backing_file", device_name) < 0) {
             printk("%s: snprintf fallito.\n", MOD_NAME);
+            kfree(sysfs_path);
+            kfree(backing_file_path);
             return 0;
         }
         
@@ -287,6 +283,8 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
 
         if (IS_ERR(filploop)) {
             printk("%s: Impossibile aprire %s (Errore: %ld).\n", MOD_NAME, sysfs_path, PTR_ERR(filploop));
+            kfree(sysfs_path);
+            kfree(backing_file_path);
             return 0;
         }
         
@@ -304,15 +302,16 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
 
             backing_file_path[bytes_read] = '\0';
             
-            // Successo: liberiamo solo il buffer del path SysFS e restituiamo il percorso letto
             kfree(sysfs_path);
             
         } else {
             printk("%s: Lettura SysFS fallita o file vuoto.\n", MOD_NAME);
+            kfree(sysfs_path);
+            kfree(backing_file_path);
+            filp_close(filploop, NULL);
             return 0;
         }
 
-        // 4. Chiudi il file
         filp_close(filploop, NULL);
 
         //controllare la lista dei dispositivi monitorati tramite snapshot e agire di conseguenza utilizzando backing_file_path come device_name
@@ -337,12 +336,11 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
         list_for_each_entry (device, &dev_list_head, device_list) { 
             
             if (device->ss_is_active == 1 && strcmp(device->device_name, backing_file_path) == 0) {
-                //device->mount_point = mount_path_buff;
+                
                 strcpy(device->mount_point, mount_path_buff);
-                //device->ss_path = snapshot_path;
                 strcpy(device->ss_path, snapshot_path);
                 device->sb = sb;
-                //device->bd_dev = bd_dev;
+
                 printk("%s: updated mount point of %s to %s\n", MOD_NAME, device->device_name, device->mount_point);
                 spin_unlock(&lock);
 
