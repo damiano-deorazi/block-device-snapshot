@@ -1,5 +1,5 @@
 obj-m += the_bd_snapshot.o
-the_bd_snapshot-objs += bd_snapshot.o bd_snapshot_list.o bd_snapshot_kprobe.o syscall_table_mod.o 
+the_bd_snapshot-objs += bd_snapshot.o bd_snapshot_list.o bd_snapshot_kprobe.o lib/scth.o lib/vtpmo.o lib/usctm.o
 
 all:
 	gcc user.c -o user

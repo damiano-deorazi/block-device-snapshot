@@ -13,20 +13,16 @@
 #include "bd_snapshot.h"
 #include "bd_snapshot_list.h"
 #include "bd_snapshot_kprobe.h"
-#include "syscall_table_mod.h"
-//TODO: includere header per la risoluzione di risorse (es. MOD_NAME)
-
-
-unsigned long the_syscall_table = 0x0;
-module_param(the_syscall_table, ulong, 0660);
+#include "lib/include/scth.h"
+#include "lib/include/usctm.h"
 
 char *passwd;
 module_param(passwd, charp, 0660);
 
 unsigned long the_ni_syscall;
-
 unsigned long new_sys_call_array[] = {0x0, 0x0, 0x0};
-int restore[HACKED_ENTRIES] = {[0 ... (HACKED_ENTRIES-1)] -1};
+#define HACKED_ENTRIES (int)(sizeof(new_sys_call_array) / sizeof(unsigned long))
+int restore[HACKED_ENTRIES] = {[0 ...(HACKED_ENTRIES - 1)] - 1};
 
 u8 digest_password[SHA256_DIGEST_SIZE];
 
@@ -93,7 +89,7 @@ int check_password(char *password)
         return 1;
 }
 
-SYSCALL_DEFINE2(activate_snapshot, const char __user*, dev_name, const char __user*, password){
+__SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const char __user*, password){
 
     char pswd[PASSWORD_MAX_LEN];
     char *device_name_copy;
@@ -199,7 +195,7 @@ SYSCALL_DEFINE2(activate_snapshot, const char __user*, dev_name, const char __us
     }
 }
 
-SYSCALL_DEFINE2(deactivate_snapshot, const char __user *, dev_name, const char __user *, password){
+__SYSCALL_DEFINEx(2, _deactivate_snapshot, const char __user *, dev_name, const char __user *, password){
 
     char pswd[PASSWORD_MAX_LEN];
     char *device_name_copy;
@@ -295,7 +291,7 @@ SYSCALL_DEFINE2(deactivate_snapshot, const char __user *, dev_name, const char _
     }
 }
 
-SYSCALL_DEFINE2(restore_snapshot, const char __user *, dev_name, const char __user *, password){
+__SYSCALL_DEFINEx(2, _restore_snapshot, const char __user *, dev_name, const char __user *, password){
 
     char pswd[PASSWORD_MAX_LEN];
     char *device_name_copy;
@@ -438,7 +434,7 @@ SYSCALL_DEFINE2(restore_snapshot, const char __user *, dev_name, const char __us
 
 
 
-int hook_init(void) {
+int __init hook_init(void) {
 
     int ret;
 
@@ -449,6 +445,8 @@ int hook_init(void) {
             return 0;
     }
 
+    printk("%s: setting password of length %d\n", MOD_NAME, ret);
+
     ret = hash_password(passwd, strlen(passwd), digest_password);
     if (ret)
     {
@@ -458,12 +456,37 @@ int hook_init(void) {
 
     //cancello la password in chiaro dalla memoria
     memset(passwd, 0, strlen(passwd)); 
-    
-    new_sys_call_array[0] = (unsigned long)sys_activate_snapshot;
-    new_sys_call_array[1] = (unsigned long)sys_deactivate_snapshot;
-    new_sys_call_array[2] = (unsigned long)sys_restore_snapshot;
 
-    modify_syscall_table(new_sys_call_array, the_syscall_table, the_ni_syscall, restore);
+    syscall_table_finder();
+    if (sys_call_table_address == 0x0)
+    {
+            printk("%s: cannot manage sys_call_table address set to 0x0\n", MOD_NAME);
+            return 0;
+    }
+    
+    new_sys_call_array[0] = (unsigned long)__x64_sys_activate_snapshot;
+    new_sys_call_array[1] = (unsigned long)__x64_sys_deactivate_snapshot;
+    new_sys_call_array[2] = (unsigned long)__x64_sys_restore_snapshot;
+
+    ret = get_entries(restore, HACKED_ENTRIES, (unsigned long *)sys_call_table_address, &the_ni_syscall);
+
+    if (ret != HACKED_ENTRIES)
+    {
+            printk("%s: could not hack %d entries (just %d)\n", MOD_NAME, HACKED_ENTRIES, ret);
+            return 0;
+    }
+
+    unprotect_memory();
+
+    for (int i = 0; i < HACKED_ENTRIES; i++)
+            ((unsigned long *)sys_call_table_address)[restore[i]] = (unsigned long)new_sys_call_array[i];
+
+    protect_memory();
+
+    printk("%s: all new system-calls correctly installed on sys-call table\n", MOD_NAME);
+    printk("%s: %s is at table entry %d\n", MOD_NAME, "_change_state", restore[0]);
+    printk("%s: %s is at table entry %d\n", MOD_NAME, "_edit_paths", restore[1]);
+    printk("%s: %s is at table entry %d\n", MOD_NAME, "_change_password", restore[2]);
 
 	ret = register_kprobe(&kp_mount);
 
@@ -489,9 +512,20 @@ int hook_init(void) {
 	return 0;
 }
 
-void hook_exit(void) {
+void __exit hook_exit(void) {
 
-    restore_syscall_table(the_syscall_table, the_ni_syscall, restore);
+    //restore_syscall_table(the_syscall_table, the_ni_syscall, restore);
+
+    unprotect_memory();
+
+    for (int i = 0; i < HACKED_ENTRIES; i++){
+
+            ((unsigned long *)sys_call_table_address)[restore[i]] = the_ni_syscall;
+    }
+    
+    protect_memory();
+
+    printk("%s: sys-call table restored to its original content\n", MOD_NAME);
 
 	unregister_kprobe(&kp_mount);
     unregister_kprobe(&kp_umount);
@@ -500,12 +534,9 @@ void hook_exit(void) {
 	printk("%s: hook module unloaded\n", MOD_NAME);
 
 }
+  
 
-long sys_activate_snapshot = (unsigned long) __x64_sys_activate_snapshot;
-long sys_deactivate_snapshot = (unsigned long) __x64_sys_deactivate_snapshot; 
-long sys_restore_snapshot = (unsigned long) __x64_sys_restore_snapshot;      
-
-int init_module(void) {
+/*int init_module(void) {
 
     int ret;
 
@@ -520,7 +551,10 @@ void cleanup_module(void) {
 
     hook_exit();
 
-}
+}*/
+
+module_init(hook_init);
+module_exit(hook_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Damiano De Orzi <damianodeorazi@hotmail.com>");

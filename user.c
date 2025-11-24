@@ -4,8 +4,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "bd_snapshot.h"
-
 #define SIZE 256
 #define AUDIT if (1)
 
