@@ -145,7 +145,7 @@ void write_on_snapshot_folder(struct work_struct *work) {
 
 int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
     if (atomic_read(&monitor_mount_is_active) == 0) {
-        return 1;
+        return 0;
     }
 
     struct timespec64 ts;
@@ -247,12 +247,12 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
                 the_task->snapshot_path = snapshot_path;
                 INIT_WORK(&(the_task->the_work), (void*)create_snapshot_folder);
                 schedule_work(&the_task->the_work);
-                return 1;
+                return 0;
             }
         }
 
         spin_unlock(&lock);
-        return 1;
+        return 0;
     
     } else {
 
@@ -357,13 +357,13 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
                 INIT_WORK(&(the_task->the_work), (void*)create_snapshot_folder);
                 schedule_work(&the_task->the_work);
 
-                return 1;
+                return 0;
             }
         }
         
         spin_unlock(&lock);
 
-        return 1;
+        return 0;
     }
  
 }

@@ -38,37 +38,43 @@ int hash_password(const char *password, size_t password_len, u8 *hash)
         u8 *digest;
 
         tfm = crypto_alloc_shash(SHA256, 0, 0);
-        if (IS_ERR(tfm))
-        {
+        if (IS_ERR(tfm)){
+
                 printk("%s: allocazione di crypto hash fallita\n", MOD_NAME);
                 return PTR_ERR(tfm);
+        
         }
 
         desc = (struct shash_desc *)kmalloc(sizeof(struct shash_desc) + crypto_shash_descsize(tfm), GFP_KERNEL);
-        if (!desc)
-                goto out_free_tfm;
+        if (!desc){
+
+            crypto_free_shash(tfm);
+            return ret;
+        
+        }
 
         desc->tfm = tfm;
 
         digest = (u8 *)kmalloc(SHA256_DIGEST_SIZE, GFP_KERNEL);
-        if (!digest)
-                goto out_free_desc;
+        if (!digest){
+
+            kfree(desc);
+            crypto_free_shash(tfm);
+            return ret;
+
+        }
 
         ret = crypto_shash_digest(desc, password, password_len, digest);
-        if (ret)
-        {
-                printk("%s: error hashing password with err %d\n", MOD_NAME, ret);
-                goto out_free_digest;
+        if (ret){
+            
+            printk("%s: error hashing password with err %d\n", MOD_NAME, ret);
+            kfree(digest);
+            kfree(desc);
+            crypto_free_shash(tfm);
+            return ret;
         }
 
         memcpy(hash, digest, SHA256_DIGEST_SIZE);
-
-out_free_digest:
-        kfree(digest);
-out_free_desc:
-        kfree(desc);
-out_free_tfm:
-        crypto_free_shash(tfm);
 
         return ret;
 }
@@ -94,6 +100,8 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
     char pswd[PASSWORD_MAX_LEN];
     char *device_name_copy;
     int ret; 
+
+    printk("%s: _activate_snapshot called\n", MOD_NAME);
 
     int process_is_root = current_euid().val;
 
@@ -509,12 +517,10 @@ int __init hook_init(void) {
 
 	printk("%s: hook module correctly loaded.\n", MOD_NAME);
 	
-	return 1;
+	return 0;
 }
 
 void __exit hook_exit(void) {
-
-    //restore_syscall_table(the_syscall_table, the_ni_syscall, restore);
 
     unprotect_memory();
 
