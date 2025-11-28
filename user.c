@@ -116,7 +116,15 @@ int main() {
     }
 
     */
+    int ret;
 
-    if (syscall(134, "", "correct_password") == -1)
+    ret = syscall(134, "", "correct_password");  //activate_snapshot
+
+    if (ret == -1)
         printf("funzione non implementata\n");// deactivate_snapshot
+    else
+        printf("funzione implementata: %d\n", ret);
+
+
+    return EXIT_SUCCESS;
 }

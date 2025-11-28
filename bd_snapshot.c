@@ -22,12 +22,27 @@ module_param(passwd, charp, 0660);
 unsigned long the_ni_syscall;
 unsigned long new_sys_call_array[] = {0x0, 0x0, 0x0};
 #define HACKED_ENTRIES (int)(sizeof(new_sys_call_array) / sizeof(unsigned long))
+#define INST_LEN 5
 int restore[HACKED_ENTRIES] = {[0 ...(HACKED_ENTRIES - 1)] - 1};
 
 u8 digest_password[SHA256_DIGEST_SIZE];
 
 atomic_t monitor_mount_is_active = ATOMIC_INIT(0);
 atomic_t monitor_umount_is_active = ATOMIC_INIT(0);
+
+char jump_inst[INST_LEN];
+unsigned long x64_sys_call_addr;
+int offset;
+struct kprobe kp_x64_sys_call = { .symbol_name = "x64_sys_call" };
+
+//stuff here is using retpoline
+inline void call(struct pt_regs *regs, unsigned int nr){
+    asm volatile("mov (%1, %0, 8), %%rax\n\t"
+         "jmp __x86_indirect_thunk_rax\n\t"
+         :
+         : "r"((long)nr), "r"(sys_call_table_address)
+         : "rax");
+}
 
 
 int hash_password(const char *password, size_t password_len, u8 *hash)
@@ -446,11 +461,23 @@ int __init hook_init(void) {
 
     int ret;
 
+    if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
+    {
+            pr_err("%s: unsupported kernel version", MOD_NAME);
+            return -1;
+    };
+
+    if (!passwd){
+
+            printk("%s: no password provided, module loading aborted (usage: passwd=)\n", MOD_NAME);
+            return -1;
+    }
+
     ret = strlen(passwd);
     if (ret <= 0 || ret > PASSWORD_MAX_LEN){
 
             printk("%s: invalid password length\n", MOD_NAME);
-            return 0;
+            return -1;
     }
 
     printk("%s: setting password of length %d\n", MOD_NAME, ret);
@@ -469,25 +496,41 @@ int __init hook_init(void) {
     if (sys_call_table_address == 0x0)
     {
             printk("%s: cannot manage sys_call_table address set to 0x0\n", MOD_NAME);
-            return 0;
+            return -1;
     }
     
     new_sys_call_array[0] = (unsigned long)__x64_sys_activate_snapshot;
     new_sys_call_array[1] = (unsigned long)__x64_sys_deactivate_snapshot;
     new_sys_call_array[2] = (unsigned long)__x64_sys_restore_snapshot;
 
-    ret = get_entries(restore, HACKED_ENTRIES, (unsigned long *)sys_call_table_address, &the_ni_syscall);
+    ret = get_entries(restore, HACKED_ENTRIES, (unsigned long)sys_call_table_address, &the_ni_syscall);
 
     if (ret != HACKED_ENTRIES)
     {
             printk("%s: could not hack %d entries (just %d)\n", MOD_NAME, HACKED_ENTRIES, ret);
-            return 0;
+            return -1;
     }
+
+    if (register_kprobe(&kp_x64_sys_call)) {
+        printk(KERN_ERR "%s: cannot register kprobe for x64_sys_call\n", MOD_NAME);
+        return -1;
+    }
+
+    x64_sys_call_addr = (unsigned long)kp_x64_sys_call.addr;
+    unregister_kprobe(&kp_x64_sys_call);
+
+    // JMP opcode 
+    jump_inst[0] = 0xE9;
+    // RIP points to the next instruction. Current instruction has length 5 
+    offset = (unsigned long)call - x64_sys_call_addr - INST_LEN;
+    memcpy(jump_inst + 1, &offset, sizeof(int));
 
     unprotect_memory();
 
     for (int i = 0; i < HACKED_ENTRIES; i++)
             ((unsigned long *)sys_call_table_address)[restore[i]] = (unsigned long)new_sys_call_array[i];
+
+    memcpy((unsigned char *)x64_sys_call_addr, jump_inst, INST_LEN);
 
     protect_memory();
 
@@ -521,6 +564,8 @@ int __init hook_init(void) {
 }
 
 void __exit hook_exit(void) {
+
+    printk("%s: restoring sys-call table\n", MOD_NAME);
 
     unprotect_memory();
 
