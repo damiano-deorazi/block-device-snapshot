@@ -17,6 +17,7 @@
 * @author Francesco Quaglia
 *
 * @date November 22, 2020
+* @updated October 2, 2024
 */
 
 #define EXPORT_SYMTAB
@@ -40,17 +41,18 @@
 #include <asm/cacheflush.h>
 #include <asm/apic.h>
 #include <linux/syscalls.h>
-
 #include "./include/vtpmo.h"
 
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Francesco Quaglia <framcesco.quaglia@uniroma2.it>");
+MODULE_AUTHOR("Francesco Quaglia <francesco.quaglia@uniroma2.it>");
 MODULE_DESCRIPTION("USCTM");
 
-extern int sys_vtpmo(unsigned long vaddr);
 
-#define LIBNAME "USCTM"
+#define MODNAME "USCTM"
+
+
+extern int sys_vtpmo(unsigned long vaddr);
 
 #define ADDRESS_MASK 0xfffffffffffff000//to migrate
 
@@ -66,8 +68,11 @@ extern int sys_vtpmo(unsigned long vaddr);
 
 #define ENTRIES_TO_EXPLORE 256
 
-#define MAX_FREE 15
-int free_entries[MAX_FREE];
+//avoid compiler warnings with the below prototypes
+int good_area(unsigned long *);
+int validate_page(unsigned long *);
+void syscall_table_finder(void);
+
 
 unsigned long *hacked_ni_syscall=NULL;
 unsigned long **hacked_syscall_tbl=NULL;
@@ -78,19 +83,13 @@ unsigned long sys_ni_syscall_address = 0x0;
 
 
 int good_area(unsigned long * addr){
-
 	int i;
-	
 	for(i=1;i<FIRST_NI_SYSCALL;i++){
 		if(addr[i] == addr[FIRST_NI_SYSCALL]) goto bad_area;
 	}	
-
 	return 1;
-
 bad_area:
-
 	return 0;
-
 }
 
 /* This routine checks if the page contains the begin of the syscall_table.  */
@@ -132,26 +131,21 @@ int validate_page(unsigned long *addr){
 	return 0;
 }
 
-/* This routines looks for the syscall table.  */
+/* This routine looks for the syscall table.  */
 void syscall_table_finder(void){
 	unsigned long k; // current page
 	unsigned long candidate; // current page
 
 	for(k=START; k < MAX_ADDR; k+=4096){	
 		candidate = k;
-		if(
-			(sys_vtpmo(candidate) != NO_MAP) 	
-		){
+		if((sys_vtpmo(candidate) != NO_MAP)){
 			// check if candidate maintains the syscall_table
 			if(validate_page( (unsigned long *)(candidate)) ){
-				printk("%s: syscall table found at %px\n",LIBNAME,(void*)(hacked_syscall_tbl));
-				printk("%s: sys_ni_syscall found at %px\n",LIBNAME,(void*)(hacked_ni_syscall));
+				printk("%s: syscall table found at %px\n",MODNAME,(void*)(hacked_syscall_tbl));
+				printk("%s: sys_ni_syscall found at %px\n",MODNAME,(void*)(hacked_ni_syscall));
 				break;
 			}
 		}
 	}
 	
 }
-
-
-
