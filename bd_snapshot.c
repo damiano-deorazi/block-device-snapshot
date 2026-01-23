@@ -9,6 +9,8 @@
 #include <linux/mutex.h>
 #include <linux/atomic.h>
 #include <linux/buffer_head.h>
+#include <linux/mnt_idmapping.h>
+#include <linux/namei.h>
 
 #include "bd_snapshot.h"
 #include "bd_snapshot_list.h"
@@ -27,8 +29,6 @@ int restore[HACKED_ENTRIES] = {[0 ...(HACKED_ENTRIES - 1)] - 1};
 
 u8 digest_password[SHA256_DIGEST_SIZE];
 
-atomic_t monitor_mount_is_active = ATOMIC_INIT(0);
-atomic_t monitor_umount_is_active = ATOMIC_INIT(0);
 
 char jump_inst[INST_LEN];
 unsigned long x64_sys_call_addr;
@@ -40,8 +40,16 @@ inline void call(struct pt_regs *regs, unsigned int nr){
     asm volatile("mov (%1, %0, 8), %%rax\n\t"
          "jmp __x86_indirect_thunk_rax\n\t"
          :
-         : "r"((long)nr), "r"(sys_call_table_address)
+         : "r"((long)nr), "r"(hacked_syscall_tbl)
          : "rax");
+}
+
+int check_root(void)
+{
+        kuid_t euid = current_cred()->euid;
+        if (euid.val != 0)
+                return 0;
+        return 1;
 }
 
 
@@ -116,9 +124,7 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
     char *device_name_copy;
     int ret; 
 
-    printk("%s: _activate_snapshot called\n", MOD_NAME);
-
-    int process_is_root = current_euid().val;
+    int process_is_root = check_root();
 
     if (!process_is_root) {
 
@@ -174,7 +180,7 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
         
         }
 
-        atomic_cmpxchg(&monitor_mount_is_active, 0, 1);
+        enable_kprobe(&kp_mount);
         spin_unlock(&lock);
 
         printk("%s: Device %s registered\n", MOD_NAME, device_name_copy);
@@ -194,20 +200,7 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
         } else {
 
             device_registered->ss_is_active = 1;
-            atomic_cmpxchg(&monitor_mount_is_active, 0, 1);
-
-            device_t *device = NULL; 
-
-            list_for_each_entry (device, &dev_list_head, device_list) { 
-            
-                if (device->ss_is_active == 0) {
-                    break;
-                }
-            }
-
-            if (device->ss_is_active) {
-                atomic_cmpxchg(&monitor_umount_is_active, 1, 0); //TODO: controllare se device è NULL o punta all'ultimo elemento della lista dei dispositivi
-            }
+            enable_kprobe(&kp_mount);
 
             spin_unlock(&lock);
 
@@ -224,7 +217,7 @@ __SYSCALL_DEFINEx(2, _deactivate_snapshot, const char __user *, dev_name, const 
     char *device_name_copy;
     int ret;
 
-    int process_is_root = current_euid().val;
+    int process_is_root = check_root();
 
     if (!process_is_root) {
 
@@ -290,21 +283,20 @@ __SYSCALL_DEFINEx(2, _deactivate_snapshot, const char __user *, dev_name, const 
         } else {
 
             device_registered->ss_is_active = 0;
-            atomic_cmpxchg(&monitor_umount_is_active, 0, 1);
 
             device_t *device = NULL; 
 
             list_for_each_entry (device, &dev_list_head, device_list) { 
             
                 if (device->ss_is_active == 1) {
-                    break;
+                    goto out;
                 }
             }
 
-            if (device->ss_is_active == 0) {
-                atomic_cmpxchg(&monitor_mount_is_active, 1, 0); //TODO: controllare se device è NULL o punta all'ultimo elemento della lista dei dispositivi
-            }
+            disable_kprobe(&kp_mount);
+            printk("%s: monitor mount disativato\n", MOD_NAME);
 
+        out:
             spin_unlock(&lock);
             
             printk("%s: Snapshot deactivated for device %s\n", MOD_NAME, device_name_copy);
@@ -320,7 +312,7 @@ __SYSCALL_DEFINEx(2, _restore_snapshot, const char __user *, dev_name, const cha
     char *device_name_copy;
     int ret;
 
-    int process_is_root = current_euid().val;
+    int process_is_root = check_root();
 
     if (!process_is_root) {
 
@@ -394,6 +386,8 @@ __SYSCALL_DEFINEx(2, _restore_snapshot, const char __user *, dev_name, const cha
                 return 0;
             }
 
+            printk("%s: opening file %s\n", MOD_NAME, device_registered->ss_path);
+
             packed_data *read_data = NULL;
             read_data = kmalloc(sizeof(packed_data), GFP_ATOMIC);
             if (!read_data) {
@@ -405,6 +399,7 @@ __SYSCALL_DEFINEx(2, _restore_snapshot, const char __user *, dev_name, const cha
             }
 
             for (;;) {
+                printk("%s: posizione attuale file %lld\n", MOD_NAME, fp->f_pos);
                 ssize_t bytes_read = kernel_read(fp, read_data, sizeof(packed_data), &fp->f_pos);
 
                 if (bytes_read < 0) {
@@ -418,6 +413,7 @@ __SYSCALL_DEFINEx(2, _restore_snapshot, const char __user *, dev_name, const cha
 
                 } else if (bytes_read == 0) {
                     // Fine del file raggiunta
+                    printk("%s: end of file\n", MOD_NAME);
                     break;
 
                 } else {
@@ -435,6 +431,8 @@ __SYSCALL_DEFINEx(2, _restore_snapshot, const char __user *, dev_name, const cha
                         kfree(device_name_copy);
                         return 0;   
                     }
+
+                    printk("%s: resoring snapshot - bn = %lld data = %s\n", MOD_NAME, block_number, data);
                     
                     memcpy(bh->b_data, data, device_registered->sb->s_blocksize);
                     bh->b_state = bh->b_state | BH_Dirty;
@@ -457,11 +455,11 @@ __SYSCALL_DEFINEx(2, _restore_snapshot, const char __user *, dev_name, const cha
 
 
 
-int __init hook_init(void) {
+int hook_init(void) {
 
     int ret;
 
-    if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
+    if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
     {
             pr_err("%s: unsupported kernel version", MOD_NAME);
             return -1;
@@ -491,6 +489,41 @@ int __init hook_init(void) {
 
     //cancello la password in chiaro dalla memoria
     memset(passwd, 0, strlen(passwd)); 
+    
+    int err;
+    struct path path_parent;
+    struct dentry *parent_dentry;
+    struct dentry *new_dentry;
+
+    err = kern_path("/", LOOKUP_FOLLOW, &path_parent);
+    if (err) {
+        printk("%s: kern_path failed for / with error %d.\n", MOD_NAME, err);
+        return -1;
+    }
+
+    parent_dentry = path_parent.dentry;
+    new_dentry = d_alloc_name(parent_dentry, "snapshot");
+    if (!new_dentry) {
+        printk("%s: d_alloc_name failed for /snapshot/.\n", MOD_NAME);
+        return -1;
+    }
+
+    printk("%s: creating /snapshot/ directory..\n", MOD_NAME);
+
+    err = vfs_mkdir(&nop_mnt_idmap, path_parent.dentry->d_inode, new_dentry, S_IRWXU);
+    if (err == -EEXIST) {
+        printk("%s: direcotry /snapshot/ already exist.\n", MOD_NAME);
+    } else {
+        if (err) {
+            printk("%s: vfs_mkdir failed for /snapshot/ with error %d.\n", MOD_NAME, err);
+            dput(new_dentry);
+            path_put(&path_parent);
+            return -1;
+        }
+    }
+
+    dput(new_dentry);
+    path_put(&path_parent);
 
     syscall_table_finder();
     if (sys_call_table_address == 0x0)
@@ -511,6 +544,7 @@ int __init hook_init(void) {
             return -1;
     }
 
+    
     if (register_kprobe(&kp_x64_sys_call)) {
         printk(KERN_ERR "%s: cannot register kprobe for x64_sys_call\n", MOD_NAME);
         return -1;
@@ -524,11 +558,11 @@ int __init hook_init(void) {
     // RIP points to the next instruction. Current instruction has length 5 
     offset = (unsigned long)call - x64_sys_call_addr - INST_LEN;
     memcpy(jump_inst + 1, &offset, sizeof(int));
-
+    
     unprotect_memory();
 
     for (int i = 0; i < HACKED_ENTRIES; i++)
-            ((unsigned long *)sys_call_table_address)[restore[i]] = (unsigned long)new_sys_call_array[i];
+            (hacked_syscall_tbl)[restore[i]] = (unsigned long *)new_sys_call_array[i];
 
     memcpy((unsigned char *)x64_sys_call_addr, jump_inst, INST_LEN);
 
@@ -538,7 +572,7 @@ int __init hook_init(void) {
     printk("%s: %s is at table entry %d\n", MOD_NAME, "_activate_snapshot", restore[0]);
     printk("%s: %s is at table entry %d\n", MOD_NAME, "_deactivate_snapshot", restore[1]);
     printk("%s: %s is at table entry %d\n", MOD_NAME, "_restore_snapshot", restore[2]);
-
+    
 	ret = register_kprobe(&kp_mount);
 
 	if (ret < 0) {
@@ -546,42 +580,52 @@ int __init hook_init(void) {
 		return ret;
 	}
 
+    disable_kprobe(&kp_mount);
+    
     ret = register_kprobe(&kp_umount);
     if (ret < 0) {
         printk("%s: hook init failed, returned %d\n", MOD_NAME, ret);
         return ret;
     }
 
+    disable_kprobe(&kp_umount);
+    
     ret = register_kretprobe(&krp_write);
     if (ret < 0) {
         printk("%s: hook init failed, returned %d\n", MOD_NAME, ret);
         return ret;
     }
 
+    disable_kretprobe(&krp_write);
+
 	printk("%s: hook module correctly loaded.\n", MOD_NAME);
 	
 	return 0;
 }
 
-void __exit hook_exit(void) {
+void hook_exit(void) {
 
     printk("%s: restoring sys-call table\n", MOD_NAME);
 
+    
+    
     unprotect_memory();
 
     for (int i = 0; i < HACKED_ENTRIES; i++){
 
-            ((unsigned long *)sys_call_table_address)[restore[i]] = the_ni_syscall;
+            //((unsigned long *)sys_call_table_address)[restore[i]] = the_ni_syscall;
+            (hacked_syscall_tbl)[restore[i]] = (unsigned long *)hacked_ni_syscall;
     }
     
     protect_memory();
-
-    printk("%s: sys-call table restored to its original content\n", MOD_NAME);
-
+    
+   
+    printk("%s: sys-call table restored to its original content\n", MOD_NAME); 
+    
 	unregister_kprobe(&kp_mount);
     unregister_kprobe(&kp_umount);
     unregister_kretprobe(&krp_write);
-
+    
 	printk("%s: hook module unloaded\n", MOD_NAME);
 
 }
