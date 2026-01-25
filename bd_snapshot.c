@@ -560,10 +560,10 @@ int hook_init(void) {
     memcpy(jump_inst + 1, &offset, sizeof(int));
     
     unprotect_memory();
-
+    /*
     for (int i = 0; i < HACKED_ENTRIES; i++)
             (hacked_syscall_tbl)[restore[i]] = (unsigned long *)new_sys_call_array[i];
-
+    */
     memcpy((unsigned char *)x64_sys_call_addr, jump_inst, INST_LEN);
 
     protect_memory();
@@ -572,6 +572,7 @@ int hook_init(void) {
     printk("%s: %s is at table entry %d\n", MOD_NAME, "_activate_snapshot", restore[0]);
     printk("%s: %s is at table entry %d\n", MOD_NAME, "_deactivate_snapshot", restore[1]);
     printk("%s: %s is at table entry %d\n", MOD_NAME, "_restore_snapshot", restore[2]);
+    
     
 	ret = register_kprobe(&kp_mount);
 
@@ -597,7 +598,7 @@ int hook_init(void) {
     }
 
     disable_kretprobe(&krp_write);
-
+    
 	printk("%s: hook module correctly loaded.\n", MOD_NAME);
 	
 	return 0;
@@ -605,12 +606,17 @@ int hook_init(void) {
 
 void hook_exit(void) {
 
-    printk("%s: restoring sys-call table\n", MOD_NAME);
-
     
+    unregister_kprobe(&kp_mount);
+    unregister_kprobe(&kp_umount);
+    unregister_kretprobe(&krp_write);
+    
+    printk("%s: kprobes unregistered\n", MOD_NAME);
+    
+    printk("%s: restoring sys-call table\n", MOD_NAME);
     
     unprotect_memory();
-
+    
     for (int i = 0; i < HACKED_ENTRIES; i++){
 
             //((unsigned long *)sys_call_table_address)[restore[i]] = the_ni_syscall;
@@ -618,15 +624,10 @@ void hook_exit(void) {
     }
     
     protect_memory();
-    
    
     printk("%s: sys-call table restored to its original content\n", MOD_NAME); 
-    
-	unregister_kprobe(&kp_mount);
-    unregister_kprobe(&kp_umount);
-    unregister_kretprobe(&krp_write);
-    
-	printk("%s: hook module unloaded\n", MOD_NAME);
+
+    printk("%s: hook module unloaded\n", MOD_NAME);
 
 }
 
@@ -634,5 +635,5 @@ module_init(hook_init);
 module_exit(hook_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Damiano De Orzi <damianodeorazi@hotmail.com>");
+MODULE_AUTHOR("Damiano De Orazi <damianodeorazi@hotmail.com>");
 MODULE_DESCRIPTION("BD-SNAPSHOT");
