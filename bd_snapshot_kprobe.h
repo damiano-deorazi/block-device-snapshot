@@ -20,10 +20,14 @@ typedef struct _packed_data{
 
 int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs);
 int monitor_umount(struct kprobe *ri, struct pt_regs *the_regs);
+int monitor_write(struct kretprobe_instance *ri, struct pt_regs *the_regs);
+void create_snapshot_folder(struct work_struct *work);
+void write_on_snapshot_folder(struct work_struct *work);
 
 //bd_snapshot_kprobe.c
 extern struct kprobe kp_mount;
 extern struct kprobe kp_umount;
 extern struct kretprobe krp_write;
+extern struct workqueue_struct *snapshot_wq;
 
 #endif

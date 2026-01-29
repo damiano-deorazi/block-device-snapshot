@@ -20,6 +20,8 @@
 #define target_umount_func "__x64_sys_umount"
 #define target_write_func "__bread_gfp"
 
+struct workqueue_struct *snapshot_wq;
+
 void replacechar(char *str, char orig, char rep) {
 
     char *ix = str;
@@ -99,6 +101,9 @@ out_free_task:
 
 void write_on_snapshot_folder(struct work_struct *work) {
 
+    printk("%s: scrittura su snapshot in corso...\n", MOD_NAME);
+
+
     packed_work *the_task = container_of(work, packed_work, the_work);
     char *snapshot_path = the_task->snapshot_path;
     struct mutex *snapshot_lock = the_task->snapshot_lock;
@@ -107,7 +112,6 @@ void write_on_snapshot_folder(struct work_struct *work) {
     char *data = bh->b_data;
     struct file *fp;
 
-    printk("%s: scrittura su snapshot in corso..(path=%s, block=%lld, data=%s)\n", MOD_NAME, snapshot_path, block_number, data);
 
     mutex_lock(snapshot_lock);
 
@@ -204,7 +208,6 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
 	} else {
 		printk("%s: error reading the mount pathname from register\n", MOD_NAME);
 		return 0;
-
     }
 
     char *fd_path;
@@ -289,7 +292,7 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
                 
                 the_task->snapshot_path = snapshot_path;
                 INIT_WORK(&(the_task->the_work), (void*)create_snapshot_folder);
-                schedule_work(&the_task->the_work);
+                queue_work(snapshot_wq, &the_task->the_work);
                 return 0;
             }
         }
@@ -404,7 +407,7 @@ int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
                     
                 the_task->snapshot_path = snapshot_path;
                 INIT_WORK(&(the_task->the_work), (void*)create_snapshot_folder);
-                schedule_work(&the_task->the_work);
+                queue_work(snapshot_wq, &the_task->the_work);
 
                 goto out_close_file;
 
@@ -475,14 +478,11 @@ int monitor_umount(struct kprobe *ri, struct pt_regs *the_regs) {
 
     spin_unlock(&lock);
 
-    /*
-
     struct work_struct the_work; 
 
     INIT_WORK(&the_work, (void*)safe_disable_krp_wr);
-    schedule_work(&the_work);
-
-    */
+    queue_work(snapshot_wq, &the_work);
+    
     return 0;
 }
 
@@ -497,7 +497,7 @@ int monitor_write(struct kretprobe_instance *ri, struct pt_regs *the_regs) {
     device_t *device = NULL;
 
     spin_lock(&lock);
-
+    
     list_for_each_entry(device, &dev_list_head, device_list) { 
         
         if (device->ss_is_active == 1 && device->sb->s_dev == bd_dev) {
@@ -516,12 +516,15 @@ int monitor_write(struct kretprobe_instance *ri, struct pt_regs *the_regs) {
             the_task->snapshot_path = snapshot_path;
             the_task->snapshot_lock = snapshot_lock;
             the_task->bh = bh;
+            printk("%s: inizializzo workqueue per scrittura su snapshot\n", MOD_NAME);
             INIT_WORK(&(the_task->the_work), (void*)write_on_snapshot_folder);
-            schedule_work(&the_task->the_work);
+            queue_work(snapshot_wq, &the_task->the_work);
 
             return 0;
         }
     }   
+
+    spin_unlock(&lock);
 
     return 0;
 }

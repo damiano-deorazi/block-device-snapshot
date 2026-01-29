@@ -32,10 +32,14 @@ int main() {
     
     }
 
-    printf("ret is %d\n", ret);
-
     printf("Snapshot activated successfully for device %s\n", device_name);
-    /*
+
+    printf("--------------------------------\n");
+
+    printf("Premere INVIO per continuare...\n");
+    getchar();
+
+    
     int fd = open("./SINGLEFILE-FS/mount/the-file", O_RDWR|O_APPEND);
     if (fd < 0) {
     
@@ -54,6 +58,11 @@ int main() {
     }
 
     printf("Read non-modified data: '%s', bytes: %zd\n", read_data, bytes_read);
+
+    printf("--------------------------------\n");
+
+    printf("Premere INVIO per continuare...\n");
+    getchar();
 
     // attivare/disattivare per il testing dello snapshot durante le operazioni di scrittura
     AUDIT {
@@ -100,6 +109,11 @@ int main() {
 
     printf("Read modified data: '%s'\n", read_data);
 
+    printf("--------------------------------\n");
+
+    printf("Premere INVIO per continuare...\n");
+    getchar();
+
     ret = syscall(174, device_name, password); // restore_snapshot
     if (ret == 0) {
 
@@ -111,6 +125,11 @@ int main() {
     close(fd);
 
     printf("Snapshot restored successfully for device %s\n", device_name);
+
+    printf("--------------------------------\n");
+
+    printf("Premere INVIO per continuare...\n");
+    getchar();
 
     fd = open("./SINGLEFILE-FS/mount/the-file", O_RDWR|O_APPEND);
     if (fd < 0) {
@@ -139,5 +158,5 @@ int main() {
     }
 
     return EXIT_SUCCESS;
-    */
+    
 }

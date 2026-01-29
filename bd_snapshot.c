@@ -11,25 +11,30 @@
 #include <linux/buffer_head.h>
 #include <linux/mnt_idmapping.h>
 #include <linux/namei.h>
+#include <linux/workqueue.h>
 
 #include "bd_snapshot.h"
 #include "bd_snapshot_list.h"
 #include "bd_snapshot_kprobe.h"
 #include "lib/include/scth.h"
-#include "lib/include/usctm.h"
+//#include "lib/include/usctm.h"
 
 char *passwd;
 module_param(passwd, charp, 0660);
 
+unsigned long the_syscall_table = 0x0;
+module_param(the_syscall_table, ulong, 0660);
+
 unsigned long the_ni_syscall;
 unsigned long new_sys_call_array[] = {0x0, 0x0, 0x0};
 #define HACKED_ENTRIES (int)(sizeof(new_sys_call_array) / sizeof(unsigned long))
-#define INST_LEN 5
+//#define INST_LEN 5
 int restore[HACKED_ENTRIES] = {[0 ...(HACKED_ENTRIES - 1)] - 1};
 
 u8 digest_password[SHA256_DIGEST_SIZE];
 
 
+/*
 char jump_inst[INST_LEN];
 unsigned long x64_sys_call_addr;
 int offset;
@@ -42,7 +47,7 @@ inline void call(struct pt_regs *regs, unsigned int nr){
          :
          : "r"((long)nr), "r"(hacked_syscall_tbl)
          : "rax");
-}
+}*/
 
 int check_root(void)
 {
@@ -489,44 +494,40 @@ int hook_init(void) {
 
     //cancello la password in chiaro dalla memoria
     memset(passwd, 0, strlen(passwd)); 
+
     
-    int err;
     struct path path_parent;
-    struct dentry *parent_dentry;
     struct dentry *new_dentry;
+    int err;
 
-    err = kern_path("/", LOOKUP_FOLLOW, &path_parent);
-    if (err) {
-        printk("%s: kern_path failed for / with error %d.\n", MOD_NAME, err);
-        return -1;
-    }
 
-    parent_dentry = path_parent.dentry;
-    new_dentry = d_alloc_name(parent_dentry, "snapshot");
-    if (!new_dentry) {
-        printk("%s: d_alloc_name failed for /snapshot/.\n", MOD_NAME);
-        return -1;
-    }
-
-    printk("%s: creating /snapshot/ directory..\n", MOD_NAME);
-
-    err = vfs_mkdir(&nop_mnt_idmap, path_parent.dentry->d_inode, new_dentry, S_IRWXU);
-    if (err == -EEXIST) {
-        printk("%s: direcotry /snapshot/ already exist.\n", MOD_NAME);
-    } else {
-        if (err) {
-            printk("%s: vfs_mkdir failed for /snapshot/ with error %d.\n", MOD_NAME, err);
-            dput(new_dentry);
-            path_put(&path_parent);
-            return -1;
+    new_dentry = kern_path_create(AT_FDCWD, "/snapshot", &path_parent, LOOKUP_DIRECTORY);
+    
+    if (IS_ERR(new_dentry)) {
+        err = PTR_ERR(new_dentry);
+        if (err == -EEXIST) {
+            printk("%s: directory /snapshot already exists\n", MOD_NAME);
+            goto install_syscall; 
         }
+        printk("%s: kern_path_create failed with error %d\n", MOD_NAME, err);
+        return err;
     }
 
-    dput(new_dentry);
-    path_put(&path_parent);
+    err = vfs_mkdir(&nop_mnt_idmap, d_inode(path_parent.dentry), new_dentry, 0660);
+    
+    if (err) {
+        printk("%s: vfs_mkdir failed with error %d\n", MOD_NAME, err);
+        done_path_create(&path_parent, new_dentry);
+        return err;
+    } 
 
-    syscall_table_finder();
-    if (sys_call_table_address == 0x0)
+    printk("%s: directory /snapshot created successfully\n", MOD_NAME);
+
+    done_path_create(&path_parent, new_dentry);
+ 
+install_syscall:
+    //syscall_table_finder();
+    if (the_syscall_table == 0x0)
     {
             printk("%s: cannot manage sys_call_table address set to 0x0\n", MOD_NAME);
             return -1;
@@ -544,7 +545,7 @@ int hook_init(void) {
             return -1;
     }
 
-    
+    /*
     if (register_kprobe(&kp_x64_sys_call)) {
         printk(KERN_ERR "%s: cannot register kprobe for x64_sys_call\n", MOD_NAME);
         return -1;
@@ -558,13 +559,13 @@ int hook_init(void) {
     // RIP points to the next instruction. Current instruction has length 5 
     offset = (unsigned long)call - x64_sys_call_addr - INST_LEN;
     memcpy(jump_inst + 1, &offset, sizeof(int));
-    
-    unprotect_memory();
-    /*
-    for (int i = 0; i < HACKED_ENTRIES; i++)
-            (hacked_syscall_tbl)[restore[i]] = (unsigned long *)new_sys_call_array[i];
     */
-    memcpy((unsigned char *)x64_sys_call_addr, jump_inst, INST_LEN);
+    unprotect_memory();
+    
+    for (int i = 0; i < HACKED_ENTRIES; i++)
+            ((unsigned long *)the_syscall_table)[restore[i]] = (unsigned long)new_sys_call_array[i];
+    
+    //memcpy((unsigned char *)x64_sys_call_addr, jump_inst, INST_LEN);
 
     protect_memory();
 
@@ -572,7 +573,12 @@ int hook_init(void) {
     printk("%s: %s is at table entry %d\n", MOD_NAME, "_activate_snapshot", restore[0]);
     printk("%s: %s is at table entry %d\n", MOD_NAME, "_deactivate_snapshot", restore[1]);
     printk("%s: %s is at table entry %d\n", MOD_NAME, "_restore_snapshot", restore[2]);
-    
+
+    snapshot_wq = create_workqueue("bd_snapshot_wq");
+    if (!work_queue) {
+        printk("%s: Error creating workqueue\n", MOD_NAME);
+        return -1;
+    }    
     
 	ret = register_kprobe(&kp_mount);
 
@@ -606,6 +612,7 @@ int hook_init(void) {
 
 void hook_exit(void) {
 
+    destroy_workqueue(snapshot_wq); 
     
     unregister_kprobe(&kp_mount);
     unregister_kprobe(&kp_umount);
@@ -618,9 +625,7 @@ void hook_exit(void) {
     unprotect_memory();
     
     for (int i = 0; i < HACKED_ENTRIES; i++){
-
-            //((unsigned long *)sys_call_table_address)[restore[i]] = the_ni_syscall;
-            (hacked_syscall_tbl)[restore[i]] = (unsigned long *)hacked_ni_syscall;
+            ((unsigned long *)the_syscall_table)[restore[i]] = the_ni_syscall;
     }
     
     protect_memory();
@@ -631,8 +636,10 @@ void hook_exit(void) {
 
 }
 
+
 module_init(hook_init);
 module_exit(hook_exit);
+
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Damiano De Orazi <damianodeorazi@hotmail.com>");
