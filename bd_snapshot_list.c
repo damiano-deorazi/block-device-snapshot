@@ -4,8 +4,8 @@
 #include <linux/spinlock.h>
 #include <linux/mutex.h>
 
-#include "bd_snapshot_list.h"
-#include "bd_snapshot.h"
+#include "include/bd_snapshot_list.h"
+#include "include/bd_snapshot.h"
 
 DEFINE_SPINLOCK(lock);
 

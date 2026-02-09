@@ -12,9 +12,9 @@
 #include <linux/fs.h>
 #include <linux/file.h>
 
-#include "bd_snapshot_kprobe.h"
-#include "bd_snapshot_list.h"
-#include "bd_snapshot.h"
+#include "include/bd_snapshot_kprobe.h"
+#include "include/bd_snapshot_list.h"
+#include "include/bd_snapshot.h"
 
 #define target_mount_func "__x64_sys_move_mount"
 #define target_umount_func "__x64_sys_umount"

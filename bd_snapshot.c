@@ -13,9 +13,9 @@
 #include <linux/namei.h>
 #include <linux/workqueue.h>
 
-#include "bd_snapshot.h"
-#include "bd_snapshot_list.h"
-#include "bd_snapshot_kprobe.h"
+#include "include/bd_snapshot.h"
+#include "include/bd_snapshot_list.h"
+#include "include/bd_snapshot_kprobe.h"
 #include "lib/include/scth.h"
 
 char *passwd;
@@ -32,7 +32,7 @@ int restore[HACKED_ENTRIES] = {[0 ...(HACKED_ENTRIES - 1)] - 1};
 u8 digest_password[SHA256_DIGEST_SIZE];
 
 int check_root(void) {
-    
+
         kuid_t euid = current_cred()->euid;
         if (euid.val != 0)
                 return 0;
