@@ -158,7 +158,7 @@ int free_entries[MAX_FREE];
 module_param_array(free_entries,int,NULL,0660);//default array size already known - here we expose what entries are free
 
 
-//#define SYS_CALL_INSTALL
+#define SYS_CALL_INSTALL
 
 #ifdef SYS_CALL_INSTALL
 

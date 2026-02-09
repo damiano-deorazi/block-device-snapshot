@@ -6,14 +6,14 @@
 
 #define BUFF_SIZE 256
 
-typedef struct _packed_work{
+typedef struct _packed_work {
     char *snapshot_path;
     struct mutex *snapshot_lock;
     struct buffer_head* bh;
     struct work_struct the_work;
 } packed_work;
 
-typedef struct _packed_data{
+typedef struct _packed_data {
     sector_t block_number;
     char data[4096];
 } packed_data;

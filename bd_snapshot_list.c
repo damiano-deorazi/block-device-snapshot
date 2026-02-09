@@ -15,8 +15,7 @@ device_t *search_device(char *device_name) {
 
     device_t *pos = NULL; 
 
-    list_for_each_entry (pos, &dev_list_head, device_list) { 
-        
+    list_for_each_entry (pos, &dev_list_head, device_list) {     
         if (strcmp(pos->device_name, device_name) == 0) {
             return pos;
         }
@@ -28,14 +27,11 @@ device_t *search_device(char *device_name) {
 int push(struct list_head *head, char *device_name) {
 
     device_t *new_device;
-
     new_device = (device_t *) kmalloc(sizeof(device_t), GFP_KERNEL);
 
-    if (new_device == NULL) {
-        
+    if (new_device == NULL) {  
         printk("%s: Memory allocation of a new device failed\n", MOD_NAME);
         return 0;
-    
     }
     
     strncpy(new_device->device_name, device_name, SIZE);
@@ -48,8 +44,9 @@ int push(struct list_head *head, char *device_name) {
 }
 
 int remove(device_t *device) {
+
     if (device == NULL) {
-        printk("%s: Device is NULL, cannot remove\n", MOD_NAME);
+        printk("%s: Device not found, cannot remove\n", MOD_NAME);
         return 0;
     }
 

@@ -20,9 +20,7 @@ typedef struct {
 } device_t;
 
 device_t *search_device(char *device_name);
-
 int push(struct list_head *head, char *device_name);
-
 int remove(device_t *device);
 
 //bd_snapshot_list.c
