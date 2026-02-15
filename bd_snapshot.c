@@ -147,6 +147,7 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
             goto out_free_dev_name;
         }
 
+        enable_kprobe(&kp_move_mount);
         enable_kprobe(&kp_mount);
 
         printk("%s: Device %s registered\n", MOD_NAME, device_name_copy);
@@ -163,6 +164,7 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
         } else {
 
             device_registered->ss_is_active = 1;
+            enable_kprobe(&kp_move_mount);
             enable_kprobe(&kp_mount);
 
             printk("%s: Snapshot activated for device %s\n", MOD_NAME, device_name_copy);
@@ -244,6 +246,7 @@ __SYSCALL_DEFINEx(2, _deactivate_snapshot, const char __user *, dev_name, const 
                 }
             }
 
+            disable_kprobe(&kp_move_mount);
             disable_kprobe(&kp_mount);
             printk("%s: monitor mount disabled\n", MOD_NAME);
 
@@ -483,8 +486,15 @@ install_syscall:
         return -1;
     }    
     
-	ret = register_kprobe(&kp_mount);
+	ret = register_kprobe(&kp_move_mount);
+	if (ret < 0) {
+		printk("%s: mount kprobe registration failed\n", MOD_NAME);
+		return ret;
+	}
 
+    disable_kprobe(&kp_move_mount);
+
+    ret = register_kprobe(&kp_mount);
 	if (ret < 0) {
 		printk("%s: mount kprobe registration failed\n", MOD_NAME);
 		return ret;
@@ -517,6 +527,7 @@ void hook_exit(void) {
 
     destroy_workqueue(snapshot_wq); 
     
+    unregister_kprobe(&kp_move_mount);
     unregister_kprobe(&kp_mount);
     unregister_kprobe(&kp_umount);
     unregister_kretprobe(&krp_write);
