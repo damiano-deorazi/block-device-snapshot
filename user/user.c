@@ -5,15 +5,19 @@
 #include <unistd.h>
 
 #define SIZE 256
+#define ACTIVATE_SYSCALL_N 156
+#define DEACTIVATE_SYSCALL_N 174
+#define RESTORE_SYSCALL_N 177
 
-char *device_path = "./SINGLEFILE-FS/image";
+char *device_path = "../SINGLEFILE-FS/image";
+char *the_file = "../SINGLEFILE-FS/mount/the-file";
 char *device_name;
 char *password = "ciao";
 
 void activate_snapshot() {
     int ret;
 
-    ret = syscall(134, device_name, password);
+    ret = syscall(ACTIVATE_SYSCALL_N, device_name, password);
     if (ret == 0) {
         printf("Failed to activate snapshot for device %s\n", device_name);
         return;
@@ -25,7 +29,7 @@ void activate_snapshot() {
 void deactivate_snapshot() {
     int ret;
 
-    ret = syscall(156, device_name, password);
+    ret = syscall(DEACTIVATE_SYSCALL_N, device_name, password);
     if (ret == 0) {
         printf("Failed to deactivate snapshot for device %s\n", device_name);
         return;
@@ -37,7 +41,7 @@ void deactivate_snapshot() {
 void restore_snapshot() {
     int ret;
 
-    ret = syscall(174, device_name, password);
+    ret = syscall(RESTORE_SYSCALL_N, device_name, password);
     if (ret == 0) {
         printf("Failed to restore snapshot for device %s\n", device_name);
         return;    
@@ -48,7 +52,7 @@ void restore_snapshot() {
 
 void read_file() {
 
-    int fd = open("./SINGLEFILE-FS/mount/the-file", O_RDWR|O_APPEND);
+    int fd = open(the_file, O_RDWR|O_APPEND);
     if (fd < 0) {    
         perror("Failed to open the file\n");
         return;
@@ -85,7 +89,7 @@ void write_file() {
         return;
     }
 
-    int fd = open("./SINGLEFILE-FS/mount/the-file", O_RDWR|O_APPEND);
+    int fd = open(the_file, O_RDWR|O_APPEND);
     if (fd < 0) {    
         perror("Failed to open the file\n");
         free(data);
@@ -115,7 +119,7 @@ int main() {
     }
 
     while (1) {
-        printf("Choose an option:\n");
+        printf("\nChoose an option:\n");
         printf("1. Activate snapshot\n");
         printf("2. Deactivate snapshot\n");
         printf("3. Restore snapshot\n");
