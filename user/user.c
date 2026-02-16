@@ -12,7 +12,7 @@
 char *device_path = "../SINGLEFILE-FS/image";
 char *the_file = "../SINGLEFILE-FS/mount/the-file";
 char *device_name;
-char *password;
+char *password = "ciao";
 
 void activate_snapshot() {
     int ret;
@@ -82,9 +82,11 @@ void write_file() {
 
     printf("Enter data to write to the file (max %d characters): ", SIZE - 1);
 
-    if (scanf("%s", data) != 1) {
-        perror("Failed to read choice\n");
-        return EXIT_FAILURE;
+    input = fgets(data, SIZE, stdin);
+    if (input == NULL) {
+        perror("Failed to read input\n");
+        free(data);
+        return;
     }
 
     int fd = open(the_file, O_RDWR|O_APPEND);
@@ -98,7 +100,6 @@ void write_file() {
     if (bytes_written < 0) {
         perror("Failed to write to the file\n");
         free(data);
-        close(fd);
         return;    
     }
 
@@ -107,11 +108,9 @@ void write_file() {
     close(fd);
 }
 
-int main(int argc, char *argv[]) {
+int main() {
 
     int ret, choice;
-
-    password = argv[1];
 
     device_name = realpath(device_path, NULL);
     if (device_name == NULL) {

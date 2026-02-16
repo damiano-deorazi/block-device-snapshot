@@ -16,8 +16,7 @@
 #include "include/bd_snapshot_list.h"
 #include "include/bd_snapshot.h"
 
-#define target_move_mount_func "__x64_sys_move_mount"
-#define target_mount_func "__x64_sys_mount"
+#define target_mount_func "__x64_sys_move_mount"
 #define target_umount_func "__x64_sys_umount"
 #define target_write_func "__bread_gfp"
 
@@ -166,213 +165,6 @@ out_free_task:
 }
 
 int monitor_mount(struct kprobe *ri, struct pt_regs *the_regs) {
-
-    struct pt_regs *regs = (struct pt_regs *)the_regs->di;
-
-    const char __user *mount_path, *dev_name;
-    char mount_path_buff[BUFF_SIZE];
-    char device_name_buff[BUFF_SIZE];
-    struct timespec64 ts;
-    ktime_get_real_ts64(&ts);
-
-    mount_path = (const char __user *)regs->si;
-    dev_name = (const char __user *)regs->di;
-
-    if (mount_path) {
-        if (strncpy_from_user(mount_path_buff, mount_path, BUFF_SIZE - 1) < 0){
-            printk("%s: error reading the mount pathname\n", MOD_NAME);
-            return 0;
-        }
-        mount_path_buff[BUFF_SIZE - 1] = '\0';
-    } else {
-        printk("%s: error reading the mount pathname from register\n", MOD_NAME);
-        return 0;
-    }
-
-    if (dev_name) {
-        if (strncpy_from_user(device_name_buff, dev_name, BUFF_SIZE - 1) < 0){
-            printk("%s: error reading the device name\n", MOD_NAME);
-            return 0;
-        }
-        device_name_buff[BUFF_SIZE - 1] = '\0';
-    } else {
-        printk("%s: error reading the device name from register\n", MOD_NAME);
-        return 0;
-    }
-
-    char *fd_path;
-    struct path the_path;
-
-    if (kern_path(fd_path, LOOKUP_FOLLOW, &the_path) < 0){
-        printk("%s: kern_path failed for %s.\n", MOD_NAME, fd_path);
-        kfree(fd_path);
-        return 0;
-    }
-
-    kfree(fd_path);
-
-    struct super_block *sb = the_path.mnt->mnt_sb;
-    dev_t bd_dev = sb->s_dev;
-    char *device_name = sb->s_id;
-
-    path_put(&the_path);
-
-    if (MAJOR(bd_dev) != LOOP_MAJOR) {
-        char *snapshot_path = kmalloc(BUFF_SIZE, GFP_ATOMIC);
-        if (!snapshot_path) {
-            printk("%s: kmalloc failed for snapshot_path.\n", MOD_NAME);
-            return 0;
-        }
-    
-        if (snprintf(snapshot_path, BUFF_SIZE, "/snapshot/%s_%lld/snapshot_data", device_name, ts.tv_sec) < 0) {
-            printk("%s: snprintf failed for snapshot_path.\n", MOD_NAME);
-            kfree(snapshot_path);
-            return 0;
-        }
-    
-        spin_lock(&lock);
-
-        device_t *device = NULL;    
-        list_for_each_entry (device, &dev_list_head, device_list) { 
-            if (device->ss_is_active == 1 && strcmp(device->device_name, device_name) == 0) {
-                strcpy(device->mount_point, mount_path_buff);
-                strcpy(device->ss_path, snapshot_path);
-                device->sb = sb;
-                
-                printk("%s: updated mount point of %s to %s\n", MOD_NAME, device->device_name, device->mount_point);
-                spin_unlock(&lock);
-
-                packed_work *the_task;
-
-                the_task = kmalloc(sizeof(packed_work), GFP_ATOMIC);
-                if (the_task == NULL) {
-                    printk("%s: workqueue task allocation failure\n", MOD_NAME);
-                    return 0;
-                }
-
-                if (snprintf(snapshot_path, BUFF_SIZE, "%s_%lld", device_name, ts.tv_sec) < 0) {
-                    printk("%s: snprintf failed for snapshot direcotry name.\n", MOD_NAME);
-                    kfree(snapshot_path);
-                    return 0;
-                }
-                
-                the_task->snapshot_path = snapshot_path;
-                INIT_WORK(&(the_task->the_work), (void*)create_snapshot_folder);
-                queue_work(snapshot_wq, &the_task->the_work);
-                return 0;
-            }
-        }
-
-        spin_unlock(&lock);
-        return 0;
-    
-    } else {
-
-        struct file *filploop;
-        char *sysfs_path;
-        char *backing_file_path;
-        char *repc_backing_file_path;
-        
-        sysfs_path = kmalloc(BUFF_SIZE, GFP_ATOMIC);
-        backing_file_path = kmalloc(BUFF_SIZE, GFP_ATOMIC);
-        repc_backing_file_path = kmalloc(BUFF_SIZE, GFP_ATOMIC);
-
-        if (!sysfs_path || !backing_file_path || !repc_backing_file_path) {
-            printk("%s: kmalloc failed.\n", MOD_NAME);
-            return 0;
-        }
-
-        if (snprintf(sysfs_path, BUFF_SIZE, "/sys/block/%s/loop/backing_file", device_name) < 0) {
-            printk("%s: snprintf failed.\n", MOD_NAME);
-            goto out_free_data;
-        }
-        
-        filploop = filp_open(sysfs_path, O_RDONLY, 0);
-
-        if (IS_ERR(filploop)) {
-            printk("%s: error opening %s (Errore: %ld).\n", MOD_NAME, sysfs_path, PTR_ERR(filploop));
-            goto out_free_data;
-        }
-        
-        loff_t pos = 0;
-        ssize_t bytes_read;
-        
-        bytes_read = kernel_read(filploop, backing_file_path, BUFF_SIZE - 1, &pos);
-        
-        if (bytes_read > 0) {
-            if (backing_file_path[bytes_read - 1] == '\n') {
-                bytes_read--;
-            }
-
-            backing_file_path[bytes_read] = '\0';
-                        
-        } else {
-            printk("%s: kernel_read failed for %s.\n", MOD_NAME, sysfs_path);
-            goto out_close_file;
-        }
-
-        spin_lock(&lock);
-                
-        char *snapshot_path = kmalloc(BUFF_SIZE, GFP_ATOMIC);
-
-        if (!snapshot_path) {
-            printk("%s: kmalloc failed for snapshot_path.\n", MOD_NAME);
-            goto out_unlock_spin;
-        }
-
-        strcpy(repc_backing_file_path, backing_file_path);
-        replacechar(repc_backing_file_path, '/', '_');
-
-        if (snprintf(snapshot_path, BUFF_SIZE, "/snapshot/%s_%lld/snapshot_data", repc_backing_file_path, ts.tv_sec) < 0) {
-            printk("%s: snprintf failed for snapshot_path.\n", MOD_NAME);
-            goto out_unlock_spin;
-        }
-
-        device_t *device = NULL;        
-        list_for_each_entry (device, &dev_list_head, device_list) {     
-            if (device->ss_is_active == 1 && strcmp(device->device_name, backing_file_path) == 0) {  
-                strcpy(device->mount_point, mount_path_buff);
-                strcpy(device->ss_path, snapshot_path);
-                device->sb = sb;
-
-                printk("%s: updated mount point of %s to %s\n", MOD_NAME, device->device_name, device->mount_point);
-                spin_unlock(&lock);
-
-                packed_work *the_task;
-                the_task = kmalloc(sizeof(packed_work), GFP_ATOMIC);
-                if (the_task == NULL) {
-                    printk("%s: workqueue task allocation failure\n", MOD_NAME);
-                    goto out_close_file;
-                }
-
-                if (snprintf(snapshot_path, BUFF_SIZE, "%s_%lld", repc_backing_file_path, ts.tv_sec) < 0) {
-                    printk("%s: snprintf failed for snapshot directory name.\n", MOD_NAME);
-                    goto out_close_file;
-                }
-                    
-                the_task->snapshot_path = snapshot_path;
-                INIT_WORK(&(the_task->the_work), (void*)create_snapshot_folder);
-                queue_work(snapshot_wq, &the_task->the_work);
-
-                goto out_close_file;
-
-            }
-        }
-        
-    out_unlock_spin:
-        spin_unlock(&lock);
-    out_close_file:
-        filp_close(filploop, NULL);
-    out_free_data:
-        kfree(sysfs_path);
-        kfree(backing_file_path);
-        kfree(repc_backing_file_path);
-        return 0;
-    }
- 
-}
-
-int monitor_move_mount(struct kprobe *ri, struct pt_regs *the_regs) {
 
     struct timespec64 ts;
     ktime_get_real_ts64(&ts);
@@ -665,14 +457,9 @@ int monitor_write(struct kretprobe_instance *ri, struct pt_regs *the_regs) {
     return 0;
 }
 
-struct kprobe kp_move_mount = {
-    .symbol_name = target_move_mount_func,
-    .pre_handler = (kprobe_pre_handler_t)monitor_move_mount,
-};
-
 struct kprobe kp_mount = {
     .symbol_name = target_mount_func,
-    .pre_handler = (kprobe_pre_handler_t)monitor_move_mount,
+    .pre_handler = (kprobe_pre_handler_t)monitor_mount,
 };
 
 struct kprobe kp_umount = {
