@@ -36,6 +36,7 @@ int push(struct list_head *head, char *device_name) {
     
     strncpy(new_device->device_name, device_name, SIZE);
     new_device->ss_is_active = 1;
+    new_device->dev_is_mounted = 0;
     mutex_init(&new_device->snapshot_lock);    
     
     list_add(&new_device->device_list, head);

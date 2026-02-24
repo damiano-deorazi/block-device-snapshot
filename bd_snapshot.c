@@ -25,7 +25,7 @@ unsigned long the_syscall_table = 0x0;
 module_param(the_syscall_table, ulong, 0660);
 
 unsigned long the_ni_syscall;
-unsigned long new_sys_call_array[] = {0x0, 0x0, 0x0};
+unsigned long new_sys_call_array[] = {0x0, 0x0};
 #define HACKED_ENTRIES (int)(sizeof(new_sys_call_array) / sizeof(unsigned long))
 int restore[HACKED_ENTRIES] = {[0 ...(HACKED_ENTRIES - 1)] - 1};
 
@@ -99,8 +99,8 @@ int check_password(char *password) {
 
 __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const char __user*, password) {
 
-    char pswd[PASSWORD_MAX_LEN];
-    char *device_name_copy;
+    char pswd[SIZE];
+    char device_name_copy[SIZE];
     int ret; 
 
     int process_is_root = check_root();
@@ -110,7 +110,7 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
         return 0;
     }
     
-    ret = strncpy_from_user(pswd, password, PASSWORD_MAX_LEN);
+    ret = strncpy_from_user(pswd, password, SIZE);
     if (ret < 0) {
         printk("%s: Error copying password from user\n", MOD_NAME);
         return 0;
@@ -122,17 +122,10 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
         return 0;
     }
 
-    device_name_copy = kmalloc(strlen(dev_name)+1, GFP_KERNEL);
-    if (!device_name_copy) {
-        printk("%s: Error allocating memory for device name copy\n", MOD_NAME);
-        return 0;
-    }
-
-    ret = strncpy_from_user(device_name_copy, dev_name, strlen(dev_name)+1);
+    ret = strncpy_from_user(device_name_copy, dev_name, SIZE);
     if (ret < 0) {
         printk("%s: Error copying device name from user\n", MOD_NAME);
-        ret = 0;
-        goto out_free_dev_name;    
+        return 0;
     }
 
     spin_lock(&lock);
@@ -141,13 +134,13 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
     if (device_registered == NULL) {
 
         if(!push(&dev_list_head, device_name_copy)) {
-            spin_unlock(&lock);
             printk("%s: Error registering device\n", MOD_NAME);
             ret = 0;
-            goto out_free_dev_name;
+            goto out_release_lock;
         }
 
-        enable_kprobe(&kp_mount);
+        //enable_kprobe(&kp_move_mount);
+        enable_kretprobe(&krp_mount);
 
         printk("%s: Device %s registered\n", MOD_NAME, device_name_copy);
         ret = 1;
@@ -163,7 +156,8 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
         } else {
 
             device_registered->ss_is_active = 1;
-            enable_kprobe(&kp_mount);
+            //enable_kprobe(&kp_move_mount);
+            enable_kretprobe(&krp_mount);
 
             printk("%s: Snapshot activated for device %s\n", MOD_NAME, device_name_copy);
             ret = 1;
@@ -173,15 +167,13 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
 
 out_release_lock:
     spin_unlock(&lock);
-out_free_dev_name:
-    kfree(device_name_copy);
     return ret;
 }
 
 __SYSCALL_DEFINEx(2, _deactivate_snapshot, const char __user *, dev_name, const char __user *, password) {
 
-    char pswd[PASSWORD_MAX_LEN];
-    char *device_name_copy;
+    char pswd[SIZE];
+    char device_name_copy[SIZE];
     int ret;
 
     int process_is_root = check_root();
@@ -191,7 +183,7 @@ __SYSCALL_DEFINEx(2, _deactivate_snapshot, const char __user *, dev_name, const 
         return 0;
     }
 
-    ret = strncpy_from_user(pswd, password, PASSWORD_MAX_LEN);
+    ret = strncpy_from_user(pswd, password, SIZE);
     if (ret < 0) {
         printk("%s: Error copying password from user\n", MOD_NAME);
         return 0;
@@ -203,35 +195,26 @@ __SYSCALL_DEFINEx(2, _deactivate_snapshot, const char __user *, dev_name, const 
         return 0;
     }
 
-    device_name_copy = kmalloc(strlen(dev_name)+1, GFP_KERNEL);
-    if (!device_name_copy) {
-        printk("%s: Error allocating memory for device name copy\n", MOD_NAME);
-        return 0;       
-    }
-
-    ret = strncpy_from_user(device_name_copy, dev_name, strlen(dev_name)+1);
+    ret = strncpy_from_user(device_name_copy, dev_name, SIZE);
     if (ret < 0) {  
         printk("%s: Error copying device name from user\n", MOD_NAME);
-        ret = 0;
-        goto out_free_dev_name;
+        return 0;
     }
 
     spin_lock(&lock);
 
     device_t *device_registered = search_device(device_name_copy);
     if (device_registered == NULL) {
-        spin_unlock(&lock);
         printk("%s: Device %s not registered\n", MOD_NAME, device_name_copy);
         ret = 0;
-        goto out_free_dev_name;
+        goto out_release_lock;
 
     } else {
 
         if (device_registered->ss_is_active == 0) {
-            spin_unlock(&lock);
             printk("%s: Snapshot already deactive for device %s\n", MOD_NAME, device_name_copy);
             ret = 1;
-            goto out_free_dev_name;
+            goto out_release_lock;
 
         } else {
 
@@ -244,28 +227,30 @@ __SYSCALL_DEFINEx(2, _deactivate_snapshot, const char __user *, dev_name, const 
                 }
             }
 
-            disable_kprobe(&kp_mount);
+            //disable_kprobe(&kp_move_mount);
+            disable_kretprobe(&krp_mount);
             printk("%s: monitor mount disabled\n", MOD_NAME);
 
-        out:
-            spin_unlock(&lock);
-            
+        out:           
             printk("%s: Snapshot deactivated for device %s\n", MOD_NAME, device_name_copy);
             ret = 1;
-            goto out_free_dev_name;
+            goto out_release_lock;
         }
     }
 
-out_free_dev_name:
-    kfree(device_name_copy);
+out_release_lock:
+    spin_unlock(&lock);
     return ret;
 }
 
-__SYSCALL_DEFINEx(2, _restore_snapshot, const char __user *, dev_name, const char __user *, password) {
+
+//TODO valutare utilità della restore, a scapito di un altro meccanismo che non faccia uso di systemcall (es. leggere direttamente i file di snapshot dalla directory /snapshot/ 
+//e scrivere i blocchi modificati sul device file, come accade per singlefilemakefs.c)
+/* __SYSCALL_DEFINEx(2, _restore_snapshot, const char __user *, dev_name, const char __user *, password) {
 
     packed_data *read_data = NULL;
-    char pswd[PASSWORD_MAX_LEN];
-    char *device_name_copy;
+    char pswd[SIZE];
+    char device_name_copy[SIZE];
     struct file *fp;
     int ret;
 
@@ -275,7 +260,7 @@ __SYSCALL_DEFINEx(2, _restore_snapshot, const char __user *, dev_name, const cha
         return 0;
     }
 
-    ret = strncpy_from_user(pswd, password, PASSWORD_MAX_LEN);
+    ret = strncpy_from_user(pswd, password, SIZE);
     if (ret < 0) {     
         printk("%s: Error copying password from user\n", MOD_NAME);
         return 0; 
@@ -286,18 +271,11 @@ __SYSCALL_DEFINEx(2, _restore_snapshot, const char __user *, dev_name, const cha
         printk("%s: Incorrect password\n", MOD_NAME);
         return 0;
     }
-
-    device_name_copy = kmalloc(strlen(dev_name)+1, GFP_KERNEL);
-    if (!device_name_copy) {    
-        printk("%s: Error allocating memory for device name copy\n", MOD_NAME);
-        return 0;       
-    }
     
-    ret = strncpy_from_user(device_name_copy, dev_name, strlen(dev_name)+1);
+    ret = strncpy_from_user(device_name_copy, dev_name, SIZE);
     if (ret < 0) {
         printk("%s: Error copying device name from user\n", MOD_NAME);
-        ret = 0;
-        goto out_free_dev_name;
+        return 0;
     }
 
     spin_lock(&lock);
@@ -308,15 +286,13 @@ __SYSCALL_DEFINEx(2, _restore_snapshot, const char __user *, dev_name, const cha
 
     if (device_registered == NULL) {
         printk("%s: Device %s not registered\n", MOD_NAME, device_name_copy);
-        ret = 0;
-        goto out_free_dev_name;
+        return 0;
 
     } else {
 
         if (device_registered->ss_path[0] == '\0') {
             printk("%s: No snapshot found for device %s\n", MOD_NAME, device_name_copy);
-            ret = 0;
-            goto out_free_dev_name;
+            return 0;
 
         } else {
 
@@ -382,18 +358,16 @@ out_close_file:
     filp_close(fp, NULL);
 out_unlock_mutex:
     mutex_unlock(&device_registered->snapshot_lock);
-out_free_dev_name:
-    kfree(device_name_copy);
     return ret;
 }
 
-
+ */
 
 int hook_init(void) {
 
     int ret;
 
-    if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)) {
+    if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)) {
         pr_err("%s: unsupported kernel version", MOD_NAME);
         return -1;
     };
@@ -404,8 +378,8 @@ int hook_init(void) {
     }
 
     ret = strlen(passwd);
-    if (ret <= 0 || ret > PASSWORD_MAX_LEN) {
-        printk("%s: invalid password length\n", MOD_NAME);
+    if (ret <= 0 || ret > SIZE) {
+        printk("%s: invalid password length (max %d characters)\n", MOD_NAME, SIZE);
         return -1;
     }
 
@@ -456,7 +430,7 @@ install_syscall:
     
     new_sys_call_array[0] = (unsigned long)__x64_sys_activate_snapshot;
     new_sys_call_array[1] = (unsigned long)__x64_sys_deactivate_snapshot;
-    new_sys_call_array[2] = (unsigned long)__x64_sys_restore_snapshot;
+    //new_sys_call_array[2] = (unsigned long)__x64_sys_restore_snapshot;
 
     ret = get_entries(restore, HACKED_ENTRIES, (unsigned long)the_syscall_table, &the_ni_syscall);
 
@@ -475,7 +449,7 @@ install_syscall:
     printk("%s: all new system-calls correctly installed on sys-call table\n", MOD_NAME);
     printk("%s: %s is at table entry %d\n", MOD_NAME, "_activate_snapshot", restore[0]);
     printk("%s: %s is at table entry %d\n", MOD_NAME, "_deactivate_snapshot", restore[1]);
-    printk("%s: %s is at table entry %d\n", MOD_NAME, "_restore_snapshot", restore[2]);
+    //printk("%s: %s is at table entry %d\n", MOD_NAME, "_restore_snapshot", restore[2]);
 
     snapshot_wq = create_workqueue("bd_snapshot_wq");
     if (!snapshot_wq) {
@@ -483,14 +457,21 @@ install_syscall:
         return -1;
     }    
     
-	ret = register_kprobe(&kp_mount);
-
+	/* ret = register_kprobe(&kp_move_mount);
 	if (ret < 0) {
 		printk("%s: mount kprobe registration failed\n", MOD_NAME);
 		return ret;
 	}
 
-    disable_kprobe(&kp_mount);
+    disable_kprobe(&kp_move_mount); */
+
+    ret = register_kretprobe(&krp_mount);
+	if (ret < 0) {
+		printk("%s: mount kprobe registration failed\n", MOD_NAME);
+		return ret;
+	}
+
+    disable_kretprobe(&krp_mount);
     
     ret = register_kprobe(&kp_umount);
     if (ret < 0) {
@@ -507,6 +488,15 @@ install_syscall:
     }
 
     disable_kretprobe(&krp_write);
+
+    /* ret = register_kprobe(&kp_write);
+    if (ret < 0) {
+        printk("%s: umount kprobe registration failed\n", MOD_NAME);
+        return ret;
+    }
+
+    disable_kprobe(&kp_write); */
+
     
 	printk("%s: hook module correctly loaded.\n", MOD_NAME);
 	
@@ -517,9 +507,11 @@ void hook_exit(void) {
 
     destroy_workqueue(snapshot_wq); 
     
-    unregister_kprobe(&kp_mount);
+    //unregister_kprobe(&kp_move_mount);
+    unregister_kretprobe(&krp_mount);
     unregister_kprobe(&kp_umount);
     unregister_kretprobe(&krp_write);
+    //unregister_kprobe(&kp_write);
     
     printk("%s: kprobes unregistered\n", MOD_NAME);
     printk("%s: restoring sys-call table\n", MOD_NAME);

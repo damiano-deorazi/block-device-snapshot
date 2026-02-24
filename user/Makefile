@@ -1,4 +1,4 @@
 all:
-	gcc user.c -o user
+	gcc -Werror -Wpedantic -Wall -Wextra user.c -o user
 clean:
 	rm user
