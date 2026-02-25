@@ -7,27 +7,13 @@
 #include <errno.h>
 #include <stdint.h>
 
+#include "../include/bd_snapshot_data.h"
+#include "../SINGLEFILE-FS/singlefilefs.h"
+
 #define SIZE 256
 #define ACTIVATE_SYSCALL_N 156
 #define DEACTIVATE_SYSCALL_N 174
-//#define RESTORE_SYSCALL_N 177
 #define DEFAULT_BLOCK_SIZE 4096
-
-typedef struct _packed_data {
-    unsigned long long block_number;
-    char data[DEFAULT_BLOCK_SIZE];
-} packed_data;
-
-struct onefilefs_inode {
-	mode_t mode;//not exploited
-	uint64_t inode_no;
-	uint64_t data_block_number;//not exploited
-
-	union {
-		uint64_t file_size;
-		uint64_t dir_children_count;
-	};
-};
 
 char *device_path = "../SINGLEFILE-FS/image";
 char *the_file = "../SINGLEFILE-FS/mount/the-file";
@@ -121,10 +107,6 @@ void restore_device(const char *snapshot_select) {
         }
         
         nbytes = pwrite(fd_device, snapshot_data.data, DEFAULT_BLOCK_SIZE, snapshot_data.block_number * DEFAULT_BLOCK_SIZE);
-        /* if (nbytes < 0) {
-            perror("Failed to write to the device\n");
-            goto out_close_fd_device;
-        } */
         if (nbytes < DEFAULT_BLOCK_SIZE) {
             printf("Failed to write to the device (wrote %ld bytes instead of %d)\n", nbytes, DEFAULT_BLOCK_SIZE);
             goto out_close_fd_device;
@@ -175,8 +157,6 @@ int restore_from_snapshot() {
 
         if (choice > 0 && choice <= n) {
             snapshot_select = namelist[choice - 1]->d_name;
-            //TODO read data from snapshot
-            //TODO restore data on the device
             restore_device(snapshot_select);
             break;
             
@@ -224,19 +204,6 @@ void unmount_restore_device() {
 
     printf("Restoring skipped.\n");
 }
-/* void restore_snapshot() {
-    int ret;
-
-    ret = syscall(RESTORE_SYSCALL_N, device_name, password);
-    if (ret == 0) {
-        printf("Failed to restore snapshot for device %s\n", device_name);
-        return;    
-    } 
-
-
-
-    printf("Snapshot restored successfully for device %s\n", device_name);
-} */
 
 void read_file() {
 

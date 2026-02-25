@@ -11,17 +11,14 @@
 //struct per la gestione della lista (collegata) dei dispositivi
 typedef struct {
     char device_name[SIZE];
-    //char mount_point[SIZE];
-    int dev_is_mounted;
-    //struct super_block *sb;
     dev_t dev_id;
+    int dev_is_mounted;
     char ss_path[SIZE];
-    int ss_is_active;   
     struct mutex snapshot_lock;
     struct list_head device_list;
 } device_t;
 
-device_t *search_device(char *device_name);
+device_t *search_device(const char *device_name);
 int push(struct list_head *head, char *device_name);
 int remove(device_t *device);
 

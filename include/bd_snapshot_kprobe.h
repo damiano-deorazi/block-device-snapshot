@@ -6,7 +6,6 @@
 #include <linux/types.h>
 
 #define BUFF_SIZE 256
-#define DEFAULT_BLOCK_SIZE 4096
 
 typedef struct _packed_work {
     char *snapshot_path;
@@ -15,19 +14,11 @@ typedef struct _packed_work {
     struct work_struct the_work;
 } packed_work;
 
-/* typedef struct _packed_work {
-    char *snapshot_path;
-    struct mutex *snapshot_lock;
-    unsigned long long block_number;
-    char data[DEFAULT_BLOCK_SIZE];
-    struct work_struct the_work;
-} packed_work; */
-
-typedef struct _packed_data {
+/* typedef struct _packed_data {
     unsigned long long block_number;
     char data[DEFAULT_BLOCK_SIZE];
 } packed_data;
-
+ */
 typedef struct _kret_data {
     struct file_system_type *fs_type;
     int flags;
@@ -36,18 +27,15 @@ typedef struct _kret_data {
 
 int monitor_umount(struct kprobe *ri, struct pt_regs *the_regs);
 int monitor_write(struct kretprobe_instance *ri, struct pt_regs *the_regs);
-//int monitor_write(struct kprobe *ri, struct pt_regs *the_regs);
 int monitor_mount_entry_handler(struct kretprobe_instance *ri, struct pt_regs *the_regs);
 int monitor_mount_ret_handler(struct kretprobe_instance *ri, struct pt_regs *the_regs);
 void create_snapshot_folder(struct work_struct *work);
 void write_on_snapshot_folder(struct work_struct *work);
 
 //bd_snapshot_kprobe.c
-//extern struct kprobe kp_move_mount;
 extern struct kretprobe krp_mount;
 extern struct kprobe kp_umount;
 extern struct kretprobe krp_write;
-//extern struct kprobe kp_write;
 extern struct workqueue_struct *snapshot_wq;
 
 #endif

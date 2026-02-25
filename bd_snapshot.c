@@ -39,7 +39,6 @@ int check_root(void) {
         return 1;
 }
 
-
 int hash_password(const char *password, size_t password_len, u8 *hash) {
 
         struct crypto_shash *tfm;
@@ -49,7 +48,7 @@ int hash_password(const char *password, size_t password_len, u8 *hash) {
 
         tfm = crypto_alloc_shash(SHA256, 0, 0);
         if (IS_ERR(tfm)) {
-                printk("%s: crypto hash allocation failed\n", MOD_NAME);
+                printk("%s: crypto hash allocation failed\n", MODNAME);
                 return PTR_ERR(tfm);
         }
 
@@ -69,7 +68,7 @@ int hash_password(const char *password, size_t password_len, u8 *hash) {
 
         ret = crypto_shash_digest(desc, password, password_len, digest);
         if (ret) { 
-            printk("%s: error hashing password with err %d\n", MOD_NAME, ret);
+            printk("%s: error hashing password with err %d\n", MODNAME, ret);
             kfree(digest);
             kfree(desc);
             crypto_free_shash(tfm);
@@ -106,25 +105,25 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
     int process_is_root = check_root();
 
     if (!process_is_root) {
-        printk("%s: Only root can activate/deactivate snapshots\n", MOD_NAME);
+        printk("%s: Only root can activate/deactivate snapshots\n", MODNAME);
         return 0;
     }
     
     ret = strncpy_from_user(pswd, password, SIZE);
     if (ret < 0) {
-        printk("%s: Error copying password from user\n", MOD_NAME);
+        printk("%s: Error copying password from user\n", MODNAME);
         return 0;
     }
 
     int login_success = check_password(pswd);
     if (!login_success) {
-        printk("%s: Incorrect password\n", MOD_NAME);
+        printk("%s: Incorrect password\n", MODNAME);
         return 0;
     }
 
     ret = strncpy_from_user(device_name_copy, dev_name, SIZE);
     if (ret < 0) {
-        printk("%s: Error copying device name from user\n", MOD_NAME);
+        printk("%s: Error copying device name from user\n", MODNAME);
         return 0;
     }
 
@@ -134,35 +133,22 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
     if (device_registered == NULL) {
 
         if(!push(&dev_list_head, device_name_copy)) {
-            printk("%s: Error registering device\n", MOD_NAME);
+            printk("%s: Error registering device\n", MODNAME);
             ret = 0;
             goto out_release_lock;
         }
 
-        //enable_kprobe(&kp_move_mount);
         enable_kretprobe(&krp_mount);
 
-        printk("%s: Device %s registered\n", MOD_NAME, device_name_copy);
+        printk("%s: Device %s registered\n", MODNAME, device_name_copy);
         ret = 1;
         goto out_release_lock;
 
     } else {
 
-        if (device_registered->ss_is_active) {
-            printk("%s: Snapshot already active for device %s\n", MOD_NAME, device_name_copy);
+            printk("%s: Snapshot already active for device %s\n", MODNAME, device_name_copy);
             ret = 1;
             goto out_release_lock;
-
-        } else {
-
-            device_registered->ss_is_active = 1;
-            //enable_kprobe(&kp_move_mount);
-            enable_kretprobe(&krp_mount);
-
-            printk("%s: Snapshot activated for device %s\n", MOD_NAME, device_name_copy);
-            ret = 1;
-            goto out_release_lock;
-        }
     }
 
 out_release_lock:
@@ -179,25 +165,25 @@ __SYSCALL_DEFINEx(2, _deactivate_snapshot, const char __user *, dev_name, const 
     int process_is_root = check_root();
 
     if (!process_is_root) {
-        printk("%s: Only root can activate/deactivate snapshots\n", MOD_NAME);
+        printk("%s: Only root can activate/deactivate snapshots\n", MODNAME);
         return 0;
     }
 
     ret = strncpy_from_user(pswd, password, SIZE);
     if (ret < 0) {
-        printk("%s: Error copying password from user\n", MOD_NAME);
+        printk("%s: Error copying password from user\n", MODNAME);
         return 0;
     }
 
     int login_success = check_password(pswd);
     if (!login_success) {
-        printk("%s: Incorrect password\n", MOD_NAME);
+        printk("%s: Incorrect password\n", MODNAME);
         return 0;
     }
 
     ret = strncpy_from_user(device_name_copy, dev_name, SIZE);
     if (ret < 0) {  
-        printk("%s: Error copying device name from user\n", MOD_NAME);
+        printk("%s: Error copying device name from user\n", MODNAME);
         return 0;
     }
 
@@ -205,37 +191,25 @@ __SYSCALL_DEFINEx(2, _deactivate_snapshot, const char __user *, dev_name, const 
 
     device_t *device_registered = search_device(device_name_copy);
     if (device_registered == NULL) {
-        printk("%s: Device %s not registered\n", MOD_NAME, device_name_copy);
-        ret = 0;
+        printk("%s: Device %s not registered\n", MODNAME, device_name_copy);
+        ret = 1;
         goto out_release_lock;
 
     } else {
 
-        if (device_registered->ss_is_active == 0) {
-            printk("%s: Snapshot already deactive for device %s\n", MOD_NAME, device_name_copy);
-            ret = 1;
-            goto out_release_lock;
+            remove(device_registered);
+            printk("%s: Snapshot deactivated for device %s\n", MODNAME, device_name_copy);
 
-        } else {
-
-            device_registered->ss_is_active = 0;
-            device_t *device = NULL; 
-
-            list_for_each_entry (device, &dev_list_head, device_list) { 
-                if (device->ss_is_active == 1) {
-                    goto out;
-                }
+            if (list_empty(&dev_list_head)) {
+                disable_kretprobe(&krp_mount);
+                disable_kprobe(&kp_umount);
+                disable_kretprobe(&krp_write);
+                printk("%s: All probes disabled\n", MODNAME);
+                
             }
-
-            //disable_kprobe(&kp_move_mount);
-            disable_kretprobe(&krp_mount);
-            printk("%s: monitor mount disabled\n", MOD_NAME);
-
-        out:           
-            printk("%s: Snapshot deactivated for device %s\n", MOD_NAME, device_name_copy);
+            
             ret = 1;
             goto out_release_lock;
-        }
     }
 
 out_release_lock:
@@ -243,151 +217,31 @@ out_release_lock:
     return ret;
 }
 
-
-//TODO valutare utilità della restore, a scapito di un altro meccanismo che non faccia uso di systemcall (es. leggere direttamente i file di snapshot dalla directory /snapshot/ 
-//e scrivere i blocchi modificati sul device file, come accade per singlefilemakefs.c)
-/* __SYSCALL_DEFINEx(2, _restore_snapshot, const char __user *, dev_name, const char __user *, password) {
-
-    packed_data *read_data = NULL;
-    char pswd[SIZE];
-    char device_name_copy[SIZE];
-    struct file *fp;
-    int ret;
-
-    int process_is_root = check_root();
-    if (!process_is_root) {
-        printk("%s: Only root can restore snapshots\n", MOD_NAME);
-        return 0;
-    }
-
-    ret = strncpy_from_user(pswd, password, SIZE);
-    if (ret < 0) {     
-        printk("%s: Error copying password from user\n", MOD_NAME);
-        return 0; 
-    }
-
-    int login_success = check_password(pswd);
-    if (!login_success) {
-        printk("%s: Incorrect password\n", MOD_NAME);
-        return 0;
-    }
-    
-    ret = strncpy_from_user(device_name_copy, dev_name, SIZE);
-    if (ret < 0) {
-        printk("%s: Error copying device name from user\n", MOD_NAME);
-        return 0;
-    }
-
-    spin_lock(&lock);
-
-    device_t *device_registered = search_device(device_name_copy);
-
-    spin_unlock(&lock);
-
-    if (device_registered == NULL) {
-        printk("%s: Device %s not registered\n", MOD_NAME, device_name_copy);
-        return 0;
-
-    } else {
-
-        if (device_registered->ss_path[0] == '\0') {
-            printk("%s: No snapshot found for device %s\n", MOD_NAME, device_name_copy);
-            return 0;
-
-        } else {
-
-            mutex_lock(&device_registered->snapshot_lock);
-
-            fp = filp_open(device_registered->ss_path, O_RDONLY, 0);
-            if (IS_ERR(fp)) {
-                printk("%s: filp_open failed for %s.\n", MOD_NAME, device_registered->ss_path);
-                ret = 0;
-                goto out_unlock_mutex;
-            }
-
-            printk("%s: opening file %s\n", MOD_NAME, device_registered->ss_path);
-
-            read_data = kmalloc(sizeof(packed_data), GFP_ATOMIC);
-            if (!read_data) {
-                printk("%s: kmalloc failed for read_data.\n", MOD_NAME);
-                ret = 0;
-                goto out_close_file;
-            }
-
-            for (;;) {
-                ssize_t bytes_read = kernel_read(fp, read_data, sizeof(packed_data), &fp->f_pos);
-
-                if (bytes_read < 0) {
-                    printk("%s: kernel_read failed for %s.\n", MOD_NAME, device_registered->ss_path);
-                    ret = 0;
-                    goto out_free_data;
-
-                } else if (bytes_read == 0) {
-                    break;
-                } else {
-                    
-                    sector_t block_number = read_data->block_number;
-                    char *data = read_data->data;
-                    struct buffer_head *bh = NULL;
-                    
-                    bh = sb_bread(device_registered->sb, block_number);
-                    if (bh == NULL) {
-                        printk("%s: sb_bread failed for block number %llu.\n", MOD_NAME, block_number);
-                        ret = 0;
-                        goto out_free_data;  
-                    }
-
-                    printk("%s: resoring snapshot - block_n = %lld data = %s\n", MOD_NAME, block_number, data);
-                    
-                    memcpy(bh->b_data, data, device_registered->sb->s_blocksize);
-                    bh->b_state = bh->b_state | BH_Dirty;
-                    write_dirty_buffer(bh, 0);
-                    brelse(bh);
-                }
-            }
-
-            printk("%s: Snapshot restored for device %s\n", MOD_NAME, dev_name);
-            ret = 1;
-            goto out_free_data;
-        }
-    }
-
-out_free_data:
-    kfree(read_data);
-out_close_file:
-    filp_close(fp, NULL);
-out_unlock_mutex:
-    mutex_unlock(&device_registered->snapshot_lock);
-    return ret;
-}
-
- */
-
 int hook_init(void) {
 
     int ret;
 
     if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)) {
-        pr_err("%s: unsupported kernel version", MOD_NAME);
+        pr_err("%s: unsupported kernel version", MODNAME);
         return -1;
     };
 
     if (!passwd) {
-        printk("%s: no password provided, module loading aborted (usage: passwd=)\n", MOD_NAME);
+        printk("%s: no password provided, module loading aborted (usage: passwd=)\n", MODNAME);
         return -1;
     }
 
     ret = strlen(passwd);
     if (ret <= 0 || ret > SIZE) {
-        printk("%s: invalid password length (max %d characters)\n", MOD_NAME, SIZE);
+        printk("%s: invalid password length (max %d characters)\n", MODNAME, SIZE);
         return -1;
     }
 
-    printk("%s: setting password of length %d\n", MOD_NAME, ret);
+    printk("%s: setting password of length %d\n", MODNAME, ret);
 
     ret = hash_password(passwd, strlen(passwd), digest_password);
     if (ret) {
-        printk("%s: password hashing failed - err %d\n", MOD_NAME, ret);
+        printk("%s: password hashing failed - err %d\n", MODNAME, ret);
         return ret;
     }
 
@@ -402,40 +256,39 @@ int hook_init(void) {
     if (IS_ERR(new_dentry)) {
         err = PTR_ERR(new_dentry);
         if (err == -EEXIST) {
-            printk("%s: directory /snapshot already exists\n", MOD_NAME);
+            printk("%s: directory /snapshot already exists\n", MODNAME);
             goto install_syscall; 
         }
 
-        printk("%s: kern_path_create failed with error %d\n", MOD_NAME, err);
+        printk("%s: kern_path_create failed with error %d\n", MODNAME, err);
         return err;
     }
 
     err = vfs_mkdir(&nop_mnt_idmap, d_inode(path_parent.dentry), new_dentry, 0660);
     
     if (err) {
-        printk("%s: vfs_mkdir failed with error %d\n", MOD_NAME, err);
+        printk("%s: vfs_mkdir failed with error %d\n", MODNAME, err);
         done_path_create(&path_parent, new_dentry);
         return err;
     } 
 
-    printk("%s: directory /snapshot created successfully\n", MOD_NAME);
+    printk("%s: directory /snapshot created successfully\n", MODNAME);
 
     done_path_create(&path_parent, new_dentry);
  
 install_syscall:
     if (the_syscall_table == 0x0) {
-        printk("%s: cannot manage sys_call_table address set to 0x0\n", MOD_NAME);
+        printk("%s: cannot manage sys_call_table address set to 0x0\n", MODNAME);
         return -1;
     }
     
     new_sys_call_array[0] = (unsigned long)__x64_sys_activate_snapshot;
     new_sys_call_array[1] = (unsigned long)__x64_sys_deactivate_snapshot;
-    //new_sys_call_array[2] = (unsigned long)__x64_sys_restore_snapshot;
 
     ret = get_entries(restore, HACKED_ENTRIES, (unsigned long)the_syscall_table, &the_ni_syscall);
 
     if (ret != HACKED_ENTRIES) {
-        printk("%s: could not hack %d entries (just %d)\n", MOD_NAME, HACKED_ENTRIES, ret);
+        printk("%s: could not hack %d entries (just %d)\n", MODNAME, HACKED_ENTRIES, ret);
         return -1;
     }
 
@@ -446,28 +299,19 @@ install_syscall:
     
     protect_memory();
 
-    printk("%s: all new system-calls correctly installed on sys-call table\n", MOD_NAME);
-    printk("%s: %s is at table entry %d\n", MOD_NAME, "_activate_snapshot", restore[0]);
-    printk("%s: %s is at table entry %d\n", MOD_NAME, "_deactivate_snapshot", restore[1]);
-    //printk("%s: %s is at table entry %d\n", MOD_NAME, "_restore_snapshot", restore[2]);
+    printk("%s: all new system-calls correctly installed on sys-call table\n", MODNAME);
+    printk("%s: %s is at table entry %d\n", MODNAME, "_activate_snapshot", restore[0]);
+    printk("%s: %s is at table entry %d\n", MODNAME, "_deactivate_snapshot", restore[1]);
 
     snapshot_wq = create_workqueue("bd_snapshot_wq");
     if (!snapshot_wq) {
-        printk("%s: Error creating workqueue\n", MOD_NAME);
+        printk("%s: Error creating workqueue\n", MODNAME);
         return -1;
-    }    
-    
-	/* ret = register_kprobe(&kp_move_mount);
-	if (ret < 0) {
-		printk("%s: mount kprobe registration failed\n", MOD_NAME);
-		return ret;
-	}
-
-    disable_kprobe(&kp_move_mount); */
+    }   
 
     ret = register_kretprobe(&krp_mount);
 	if (ret < 0) {
-		printk("%s: mount kprobe registration failed\n", MOD_NAME);
+		printk("%s: mount kprobe registration failed\n", MODNAME);
 		return ret;
 	}
 
@@ -475,7 +319,7 @@ install_syscall:
     
     ret = register_kprobe(&kp_umount);
     if (ret < 0) {
-        printk("%s: umount kprobe registration failed\n", MOD_NAME);
+        printk("%s: umount kprobe registration failed\n", MODNAME);
         return ret;
     }
 
@@ -483,23 +327,13 @@ install_syscall:
     
     ret = register_kretprobe(&krp_write);
     if (ret < 0) {
-        printk("%s: write kretprobe registration failed\n", MOD_NAME);
+        printk("%s: write kretprobe registration failed\n", MODNAME);
         return ret;
     }
 
     disable_kretprobe(&krp_write);
-
-    /* ret = register_kprobe(&kp_write);
-    if (ret < 0) {
-        printk("%s: umount kprobe registration failed\n", MOD_NAME);
-        return ret;
-    }
-
-    disable_kprobe(&kp_write); */
-
     
-	printk("%s: hook module correctly loaded.\n", MOD_NAME);
-	
+	printk("%s: hook module correctly loaded.\n", MODNAME);
 	return 0;
 }
 
@@ -507,14 +341,12 @@ void hook_exit(void) {
 
     destroy_workqueue(snapshot_wq); 
     
-    //unregister_kprobe(&kp_move_mount);
     unregister_kretprobe(&krp_mount);
     unregister_kprobe(&kp_umount);
     unregister_kretprobe(&krp_write);
-    //unregister_kprobe(&kp_write);
     
-    printk("%s: kprobes unregistered\n", MOD_NAME);
-    printk("%s: restoring sys-call table\n", MOD_NAME);
+    printk("%s: kprobes unregistered\n", MODNAME);
+    printk("%s: restoring sys-call table\n", MODNAME);
     
     unprotect_memory();
     
@@ -524,8 +356,8 @@ void hook_exit(void) {
     
     protect_memory();
    
-    printk("%s: sys-call table restored to its original content\n", MOD_NAME); 
-    printk("%s: hook module unloaded\n", MOD_NAME);
+    printk("%s: sys-call table restored to its original content\n", MODNAME); 
+    printk("%s: hook module unloaded\n", MODNAME);
 
 }
 

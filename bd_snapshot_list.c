@@ -11,7 +11,7 @@ DEFINE_SPINLOCK(lock);
 
 LIST_HEAD(dev_list_head);
 
-device_t *search_device(char *device_name) {
+device_t *search_device(const char *device_name) {
 
     device_t *pos = NULL; 
 
@@ -30,12 +30,11 @@ int push(struct list_head *head, char *device_name) {
     new_device = (device_t *) kmalloc(sizeof(device_t), GFP_KERNEL);
 
     if (new_device == NULL) {  
-        printk("%s: Memory allocation of a new device failed\n", MOD_NAME);
+        printk("%s: Memory allocation of a new device failed\n", MODNAME);
         return 0;
     }
     
     strncpy(new_device->device_name, device_name, SIZE);
-    new_device->ss_is_active = 1;
     new_device->dev_is_mounted = 0;
     mutex_init(&new_device->snapshot_lock);    
     
@@ -47,7 +46,7 @@ int push(struct list_head *head, char *device_name) {
 int remove(device_t *device) {
 
     if (device == NULL) {
-        printk("%s: Device not found, cannot remove\n", MOD_NAME);
+        printk("%s: Device not found, cannot remove\n", MODNAME);
         return 0;
     }
 
