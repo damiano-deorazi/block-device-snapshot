@@ -11,7 +11,7 @@ clean:
 
 mount:
 	@if [ -z "$(pw)" ]; then \
-		echo "Errore: Devi specificare una password. Esempio: make install pw=la_tua_password"; \
+		echo "Errore: Devi specificare una password. Esempio: make mount pw=la_tua_password"; \
 		exit 1; \
 	fi
 	insmod the_bd_snapshot.ko passwd=$(pw) the_syscall_table=$(A)

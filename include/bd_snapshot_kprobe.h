@@ -14,11 +14,6 @@ typedef struct _packed_work {
     struct work_struct the_work;
 } packed_work;
 
-/* typedef struct _packed_data {
-    unsigned long long block_number;
-    char data[DEFAULT_BLOCK_SIZE];
-} packed_data;
- */
 typedef struct _kret_data {
     struct file_system_type *fs_type;
     int flags;

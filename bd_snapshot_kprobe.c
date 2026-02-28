@@ -89,15 +89,7 @@ void write_on_snapshot_folder(struct work_struct *work) {
     size_t size;
 
     mutex_lock(snapshot_lock);
-
-    if (block_number == 1) {
-        struct onefilefs_inode *inode_info = (struct onefilefs_inode *)data;
-        printk("%s: Block number 1 contains inode information - inode_no: %lld, file size: %llu (SIZE da strlen(data)=%ld)\n", 
-            MODNAME, inode_info->inode_no, inode_info->file_size, strlen(data));
-    }
-
-
-    
+   
     fp = filp_open(snapshot_path, O_CREAT|O_RDWR|O_APPEND, 0644);
     if (IS_ERR(fp)) {
         printk("%s: error opening snapshot directory %s (Errore: %ld).\n", MODNAME, snapshot_path, PTR_ERR(fp));
@@ -154,7 +146,7 @@ void write_on_snapshot_folder(struct work_struct *work) {
         goto out_free_wdata;
     }
     
-    printk("%s: Wrote %zd bytes to snapshot file %s (block number %llu).\n", MODNAME, bytes_written, snapshot_path, block_number);
+    printk("%s: Wrote block (number %llu) to snapshot file %s.\n", MODNAME, block_number, snapshot_path);
 
 out_free_wdata:
     kfree(data_to_write);

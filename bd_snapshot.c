@@ -106,25 +106,25 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
 
     if (!process_is_root) {
         printk("%s: Only root can activate/deactivate snapshots\n", MODNAME);
-        return 0;
+        return -1;
     }
     
     ret = strncpy_from_user(pswd, password, SIZE);
     if (ret < 0) {
         printk("%s: Error copying password from user\n", MODNAME);
-        return 0;
+        return -1;
     }
 
     int login_success = check_password(pswd);
     if (!login_success) {
         printk("%s: Incorrect password\n", MODNAME);
-        return 0;
+        return -1;
     }
 
     ret = strncpy_from_user(device_name_copy, dev_name, SIZE);
     if (ret < 0) {
         printk("%s: Error copying device name from user\n", MODNAME);
-        return 0;
+        return -1;
     }
 
     spin_lock(&lock);
@@ -141,14 +141,14 @@ __SYSCALL_DEFINEx(2, _activate_snapshot, const char __user*, dev_name, const cha
         enable_kretprobe(&krp_mount);
 
         printk("%s: Device %s registered\n", MODNAME, device_name_copy);
-        ret = 1;
+        ret = 0;
         goto out_release_lock;
 
     } else {
 
-            printk("%s: Snapshot already active for device %s\n", MODNAME, device_name_copy);
-            ret = 1;
-            goto out_release_lock;
+        printk("%s: Snapshot already active for device %s\n", MODNAME, device_name_copy);
+        ret = 0;
+        goto out_release_lock;
     }
 
 out_release_lock:
@@ -166,25 +166,25 @@ __SYSCALL_DEFINEx(2, _deactivate_snapshot, const char __user *, dev_name, const 
 
     if (!process_is_root) {
         printk("%s: Only root can activate/deactivate snapshots\n", MODNAME);
-        return 0;
+        return -1;
     }
 
     ret = strncpy_from_user(pswd, password, SIZE);
     if (ret < 0) {
         printk("%s: Error copying password from user\n", MODNAME);
-        return 0;
+        return -1;
     }
 
     int login_success = check_password(pswd);
     if (!login_success) {
         printk("%s: Incorrect password\n", MODNAME);
-        return 0;
+        return -1;
     }
 
     ret = strncpy_from_user(device_name_copy, dev_name, SIZE);
     if (ret < 0) {  
         printk("%s: Error copying device name from user\n", MODNAME);
-        return 0;
+        return -1;
     }
 
     spin_lock(&lock);
@@ -192,7 +192,7 @@ __SYSCALL_DEFINEx(2, _deactivate_snapshot, const char __user *, dev_name, const 
     device_t *device_registered = search_device(device_name_copy);
     if (device_registered == NULL) {
         printk("%s: Device %s not registered\n", MODNAME, device_name_copy);
-        ret = 1;
+        ret = 0;
         goto out_release_lock;
 
     } else {
@@ -208,7 +208,7 @@ __SYSCALL_DEFINEx(2, _deactivate_snapshot, const char __user *, dev_name, const 
                 
             }
             
-            ret = 1;
+            ret = 0;
             goto out_release_lock;
     }
 

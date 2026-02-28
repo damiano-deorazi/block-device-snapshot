@@ -26,24 +26,20 @@ void activate_snapshot() {
     int ret;
 
     ret = syscall(ACTIVATE_SYSCALL_N, device_name, password);
-    if (ret == 0) {
+    if (ret == -1) {
         printf("Failed to activate snapshot for device %s\n", device_name);
         return;
     }
-
-    printf("Snapshot activated successfully for device %s\n", device_name);
 }
 
 void deactivate_snapshot() {
     int ret;
 
     ret = syscall(DEACTIVATE_SYSCALL_N, device_name, password);
-    if (ret == 0) {
+    if (ret == -1) {
         printf("Failed to deactivate snapshot for device %s\n", device_name);
         return;
     }
-    
-    printf("Snapshot deactivated successfully for device %s\n", device_name);
 }
 
 void mount_device() {
@@ -54,8 +50,6 @@ void mount_device() {
         printf("Failed to mount device %s\n", device_name);
         return;
     }
-
-    printf("Device %s mounted successfully\n", device_name);
 }
 
 int filter(const struct dirent *entry) {
@@ -78,13 +72,13 @@ void restore_device(const char *snapshot_select) {
             return;
         } 
         
-        perror("Failed to open the snapshot file\n");
+        perror("Failed to open the snapshot file");
         return;
     }
 
     fd_device = open(device_name, O_RDWR);
     if (fd_device == -1) {
-        perror("Failed to open the device\n");
+        perror("Failed to open the device");
         goto out_close_fd_snapshot;
     }
 
@@ -93,13 +87,11 @@ void restore_device(const char *snapshot_select) {
     for (;;) {
         nbytes = read(fd_snapshot, &snapshot_data, sizeof(snapshot_data));
         if (nbytes < 0) {
-            perror("Failed to read from the snapshot file\n");
+            perror("Failed to read from the snapshot file");
             goto out_close_fd_device;
         } else if (nbytes == 0) {
             break;
         }
-
-        printf("Restoring block number %llu with data: %s\n", snapshot_data.block_number, snapshot_data.data);
 
         if (snapshot_data.block_number == 1){
             struct onefilefs_inode *inode = (struct onefilefs_inode *)snapshot_data.data;
@@ -128,7 +120,7 @@ int restore_from_snapshot() {
     n = scandir(snapshot_path, &namelist, filter, alphasort);
 
     if (n < 0) {
-        perror("Failed to open snapshot directory\n");
+        perror("Failed to open snapshot directory");
         return 1;
     }
 
@@ -179,16 +171,15 @@ int restore_from_snapshot() {
 void unmount_restore_device() {
     char command[SIZE];
     char choice;
+    int ret;
 
     snprintf(command, SIZE, "umount %s", mount_point);
-    int ret = system(command);
+    ret = system(command);
     if (ret != 0) {
-        //printf("Failed to unmount device %s\n", device_name);
         return;
     }
 
-    printf("Device %s unmounted successfully\n", device_name);
-
+    printf("\nDevice %s unmounted successfully\n", device_name);
     printf("Do you want to restore the snapshot for device %s? (y/n)", device_name);
 
     if (scanf(" %c", &choice) != 1) {
@@ -197,7 +188,6 @@ void unmount_restore_device() {
     }
 
     if (choice == 'y' || choice == 'Y') {
-        printf("Restoring snapshot for device %s...\n", device_name);
         restore_from_snapshot();
         return;
     } 
@@ -209,55 +199,45 @@ void read_file() {
 
     int fd = open(the_file, O_RDWR|O_APPEND);
     if (fd < 0) {    
-        perror("Failed to open the file\n");
+        perror("Failed to open the file");
         return;
     }
 
     char *read_data = malloc(SIZE);
     ssize_t bytes_read = read(fd, read_data, SIZE);
     if (bytes_read < 0) {
-        perror("Failed to read from the file\n");
+        perror("Failed to read from the file");
         return;   
     }
 
-    printf("Read data: '%s', bytes: %zd\n", read_data, bytes_read);
+    printf("Read data: '%s'\n", read_data);
     free(read_data);
     close(fd);
 }
 
 void write_file() {
 
-    char *data;
+    char data[SIZE];
 
-    data = malloc(SIZE);
-    if (data == NULL) {
-        perror("Failed to allocate memory for data\n");
-        return;
-    }
+    printf("\nEnter data to write to the file (max %d characters): ", SIZE - 1);
 
-    printf("Enter data to write to the file (max %d characters): ", SIZE - 1);
-
-    if (scanf("%s", data) != 1) { //TODO verificare il formato corretto per scanf
-        perror("Failed to read data\n");
+    if (scanf(" %[^\n]s", data) != 1) { 
+        perror("Scanf failed");
         return;
     }
 
     int fd = open(the_file, O_RDWR|O_APPEND);
     if (fd < 0) {    
-        perror("Failed to open the file\n");
-        free(data);
+        perror("Failed to open the file");
         return;
     }
 
     ssize_t bytes_written = write(fd, data, strlen(data));
     if (bytes_written < 0) {
-        perror("Failed to write to the file\n");
-        free(data);
+        perror("Failed to write to the file");
         return;    
     }
 
-    printf("Wrote %zd bytes to the file.\n", bytes_written);
-    free(data);
     close(fd);
 }
 
@@ -274,23 +254,22 @@ int main(int argc, char *argv[]) {
 
     device_name = realpath(device_path, NULL);
     if (device_name == NULL) {
-        perror("realpath failed\n");
+        perror("realpath failed");
         return EXIT_FAILURE;
     }
 
     while (1) {
         printf("\nChoose an option:\n");
-        printf("1. Activate snapshot\n");
-        printf("2. Deactivate snapshot\n");
-        printf("3. Mount device\n");
-        printf("4. Unmount device (and restore)\n");
-        //printf("3. Restore snapshot\n");
-        printf("5. Read file\n");
-        printf("6. Write file\n");
-        printf("7. Exit\n");
+        printf("[1] Activate snapshot\n");
+        printf("[2] Deactivate snapshot\n");
+        printf("[3] Mount device\n");
+        printf("[4] Unmount device (and restore)\n");
+        printf("[5] Read file\n");
+        printf("[6] Write file\n");
+        printf("[0] Exit\n");
 
         if (scanf("%d", &choice) != 1) {
-            perror("Failed to read choice\n");
+            perror("Failed to read choice");
             return EXIT_FAILURE;
         }
 
@@ -302,7 +281,6 @@ int main(int argc, char *argv[]) {
                 deactivate_snapshot();
                 break;
             case 3:
-                //restore_snapshot();
                 mount_device();
                 break;
             case 4:
@@ -314,7 +292,7 @@ int main(int argc, char *argv[]) {
             case 6:
                 write_file();
                 break;
-            case 7:
+            case 0:
                 return EXIT_SUCCESS;
             default:
                 printf("Invalid choice, please try again.\n");
